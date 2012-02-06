@@ -67,8 +67,8 @@ backend: an object with methods as follows.  Any method that changes the
          The following are only required if read_only is False.  They should
          each return True if the action is taken, else False.
 
-    copy: takes a destination path followed by file or directory paths as
-          separate arguments to copy there.
+    copy: takes a list of (old_path, new_path) tuples to copy files or
+          directories.
 
     move: takes a list of (old_path, new_path) tuples to move files or
           directories.
@@ -83,7 +83,9 @@ path: the initial path to display.
 read_only: whether the directory tree is read-only; if True, things like copy,
            move and delete aren't provided, and the backend need not support
            these methods.
-cache: whether to cache directory contents when requested.
+cache: whether to cache directory contents when requested.  There is no need to
+       clear the cache after any changes that go through this class and the
+       given backend (copy, delete, etc.); this is done automatically.
 
     METHODS
 
@@ -105,12 +107,9 @@ buttons: the buttons attribute of a Buttons instance.
 
 """
 
-    def __init__ (self, backend, path = [], read_only = False,
-                  cache = False, sep = '/', prepend_sep = True):
+    def __init__ (self, backend, path = [], read_only = False, cache = False):
         self.backend = backend
         self.path = list(path)
-        self.sep = str(sep)
-        self.prepend_sep = bool(prepend_sep)
         self.read_only = read_only
         self.cache = cache
         self._cache = {}
@@ -271,7 +270,7 @@ buttons: the buttons attribute of a Buttons instance.
                                 self._paste))
             actions += [
                 (gtk.STOCK_DELETE, 'Delete selected files',
-                 self.backend.delete) + item_paths,
+                 self._delete) + item_paths,
                 ('_Rename', 'Rename selected files', self._rename, paths),
                 (gtk.STOCK_NEW, 'Create directory', self._new_dir),
                 None
@@ -378,17 +377,21 @@ buttons: the buttons attribute of a Buttons instance.
         cb = self._clipboard
         if cb is not None:
             files, cut = cb
+            path = self.path
             f = self.backend.move if cut else self.backend.copy
-            if f(self.path, *files):
+            if f(*((f, path + [f[-1]]) for f in files)):
                 self.refresh(True)
                 if cut:
                     self._uncut()
 
-    def _delete (self):
-        """Delete selected files, if any."""
-        files = self.get_selected_files()
+    def _delete (self, *files):
+        """Delete give files, else selected files, if any."""
+        if not files:
+            path = self.path
+            files = [path + [name] for name in self.get_selected_files()]
         if files:
-            if self.backend.delete(files):
+            if self.backend.delete(*files):
+                # TODO: select next file if any, else previous if any
                 self.refresh(True)
 
     def _rename_selected (self):
@@ -595,7 +598,7 @@ If you call show_all, call update immediately afterwards.
     CONSTRUCTOR
 
 AddressBar(manager, sep = '/', prepend_sep = True, append_sep = False,
-           padding = 5)
+           padding = 6)
 
 manager: a Manager instance.
 sep: the path separator used in output.  This can be any string.
@@ -621,7 +624,7 @@ mode_button: the button used to switch display modes.
 
 """
     def __init__ (self, manager, sep = '/', prepend_sep = True,
-                  append_sep = False, padding = 5):
+                  append_sep = False, padding = 6):
         gtk.Box.__init__(self, False, padding)
         self.manager = manager
         self.sep = sep
@@ -635,7 +638,7 @@ mode_button: the button used to switch display modes.
         mode_b.connect('toggled', f)
         self.pack_start(mode_b, False, False, 0)
         # entry
-        self.address = gtk.Box(False, 5)
+        self.address = gtk.Box(False, padding)
         self.pack_start(self.address, True, True, 0)
         self.entry = e = gtk.Entry()
         self.address.pack_start(e, True, True, 0)
@@ -800,4 +803,5 @@ button_list: a list of Gtk.Button instances: back, forward, up, new, in that
     buttons[1].set_sensitive(m._hist_pos != len(m._history) - 1)
     # only allow up if not in root directory
     buttons[2].set_sensitive(bool(m.path))
-    return buttons
+    # return copy to avoid changes to manager.buttons
+    return list(buttons)
