@@ -162,6 +162,7 @@ That is, you can place it directly in such a tree to import lots of files.
         tree[(d, None)] = tree_from_dir(d, walk_iter)
     return tree
 
+
 class GCFS:
     """Read from and make changes to a GameCube image's filesystem.
 
@@ -527,7 +528,7 @@ It's probably a good idea to back up first...
             # find next file or dir alphabetically
             children = tree[None]
             # += causes the original list to be modified
-            children = children + list(k for k in tree.keys() if k is not None)
+            children = children + list(k for k in tree if k is not None)
             child = min(children, key = sort_key)
             if len(child) == 3:
                 # file

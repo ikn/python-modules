@@ -1,7 +1,7 @@
 """A file manager for an arbitrary filesystem backend.
 
 Python version: 3.
-Release: 1.
+Release: 2.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -11,12 +11,21 @@ included, you can find it here:
 
 Manager
 AddressBar
-Buttons
+
+    FUNCTIONS
+
+buttons
 
 """
 
 # TODO:
 # - hide bits of the addressbar breadcrumbs if it gets bigger than its parent
+# - refresh should preserve selection
+# - should remember selection on back/forward
+# - if drag from an already selected file, drag and drop it/multiple instead of
+#   changing selection
+# - allow drag and drop between instances
+# - searching doesn't work
 
 from gi.repository import Gtk as gtk
 
@@ -136,7 +145,7 @@ buttons: the buttons attribute of a Buttons instance.
         # sorting
         self._model.set_default_sort_func(self._sort_tree)
         # FIXME: -1 should be DEFAULT_SORT_COLUMN_ID, but I can't find it
-        self._model.set_sort_column_id(-1, 1)
+        self._model.set_sort_column_id(-1, gtk.SortType.ASCENDING)
         # accelerators
         group = self.accel_group = gtk.AccelGroup()
         accels = [
@@ -460,17 +469,26 @@ buttons: the buttons attribute of a Buttons instance.
             # store in cache
             if self.cache:
                 self._cache[tuple(self.path)] = items
+        # disable sorting
+        # FIXME: -2 should be UNSORTED_SORT_COLUMN_ID, but I can't find it
+        model.set_sort_column_id(-2, gtk.SortType.ASCENDING)
         # add to model
         cb = self._clipboard
         if cb is not None:
             cb = cb[0] if cb[1] else False
+        DIR = gtk.STOCK_DIRECTORY
+        FILE = gtk.STOCK_FILE
+        path = self.path
         for name, is_dir in items:
-            icon = gtk.STOCK_DIRECTORY if is_dir else gtk.STOCK_FILE
-            if cb and self.path + [name] in cb:
+            icon = DIR if is_dir else FILE
+            if cb and path + [name] in cb:
                 colour = NAME_COLOUR_CUT
             else:
                 colour = NAME_COLOUR
             model.append((is_dir, icon, name, colour, False))
+        # enable sorting again
+        # FIXME: -1 should be DEFAULT_SORT_COLUMN_ID, but I can't find it
+        model.set_sort_column_id(-1, gtk.SortType.ASCENDING)
 
     def set_path (self, path, add_to_hist = True, tell_address_bar = True):
         """Set the current path.
@@ -487,13 +505,16 @@ tell_address_bar: whether to notify the AddressBar instance associated with
         if path == self.path:
             return
         self.path = path
+        # history
         if add_to_hist:
             self._hist_pos += 1
             self._history = self._history[:self._hist_pos] + [path]
+        # file listing
         self.refresh()
+        # address bar
         if tell_address_bar and self.address_bar is not None:
             self.address_bar.set_path(path)
-        # set button sensitivity
+        # button sensitivity
         if self.buttons is not None:
             sensitive = (self._hist_pos != 0,
                          self._hist_pos != len(self._history) - 1,
@@ -552,18 +573,19 @@ dirs: if none are given, clear all cache; otherwise, clear the cache for these
         """Sort callback."""
         row1 = model[iter1]
         is_dir1 = row1[COL_IS_DIR]
-        name1 = row1[COL_NAME]
         row2 = model[iter2]
         is_dir2 = row2[COL_IS_DIR]
-        name2 = row2[COL_NAME]
         # dirs first
         if is_dir1 != is_dir2:
-            return 1 if is_dir1 else -1
-        elif None in (name1, name2):
+            return 1 if is_dir2 else -1
+        # if either name is None, it's not in the model yet
+        name1 = row1[COL_NAME]
+        name2 = row2[COL_NAME]
+        if None in (name1, name2):
             return 0
         # alphabetical
-        else:
-            return (name2 > name1) - (name2 < name1)
+        return (name1 > name2) - (name1 < name2)
+
 
 class AddressBar (gtk.Box):
     """An address bar to work with a Manager.  Subclass of Gtk.Box.
@@ -737,50 +759,45 @@ This does not affect the manager.
             self.address.hide()
             self.breadcrumbs.show()
 
-class Buttons (gtk.HButtonBox):
-    """Some buttons to work with a Manager.  Subclass of Gtk.HButtonBox.
 
-    CONSTRUCTOR
+def buttons (manager):
+    """Returns some buttons to work with a Manager.
 
-Buttons(manager)
+buttons(manager) -> button_list
 
 manager: a Manager instance.
 
-    ATTRIBUTES
-
-buttons: a list of this instance's Gtk.Button instances.
+button_list: a list of Gtk.Button instances: back, forward, up, new, in that
+             order.  If manager is read-only, new is omitted.
 
 """
-
-    def __init__ (self, manager):
-        gtk.HButtonBox.__init__(self)
-        m = manager
-        m.buttons = self.buttons = []
-        # widgets
-        button_data = [
-            (gtk.STOCK_GO_BACK, 'Go to the previous directory', m.back),
-            (gtk.STOCK_GO_FORWARD, 'Go to the next directory in history',
-             m.forwards),
-            (gtk.STOCK_GO_UP, 'Go to parent directory', m.up)
-        ]
-        # only show new if not read-only
-        if not m.read_only:
-            button_data.append((gtk.STOCK_NEW, 'Create directory', m._new_dir))
-        # create and add buttons
-        f = lambda widget, cb, *args: cb(*args)
-        for name, tooltip, cb, *cb_args in button_data:
-            if name.startswith('gtk-'):
-                b = gtk.Button(None, name)
-            else:
-                b = gtk.Button(name, None, '_' in name)
-            self.buttons.append(b)
-            self.add(b)
-            b.set_tooltip_text(tooltip)
-            b.connect('clicked', f, cb, *cb_args)
-        # visibility
-        # only allow back if have history
-        self.buttons[0].set_sensitive(m._hist_pos != 0)
-        # only allow forwards if have forwards history
-        self.buttons[1].set_sensitive(m._hist_pos != len(m._history) - 1)
-        # only allow up if not in root directory
-        self.buttons[2].set_sensitive(bool(m.path))
+    m = manager
+    m.buttons = buttons = []
+    # widgets
+    button_data = [
+        (gtk.STOCK_GO_BACK, 'Go to the previous directory', m.back),
+        (gtk.STOCK_GO_FORWARD, 'Go to the next directory in history',
+         m.forwards),
+        (gtk.STOCK_GO_UP, 'Go to parent directory', m.up)
+    ]
+    # only show new if not read-only
+    if not m.read_only:
+        button_data.append((gtk.STOCK_NEW, 'Create directory', m._new_dir))
+    # create and add buttons
+    f = lambda widget, cb, *args: cb(*args)
+    for name, tooltip, cb, *cb_args in button_data:
+        if name.startswith('gtk-'):
+            b = gtk.Button(None, name)
+        else:
+            b = gtk.Button(name, None, '_' in name)
+        buttons.append(b)
+        b.set_tooltip_text(tooltip)
+        b.connect('clicked', f, cb, *cb_args)
+    # visibility
+    # only allow back if have history
+    buttons[0].set_sensitive(m._hist_pos != 0)
+    # only allow forwards if have forwards history
+    buttons[1].set_sensitive(m._hist_pos != len(m._history) - 1)
+    # only allow up if not in root directory
+    buttons[2].set_sensitive(bool(m.path))
+    return buttons
