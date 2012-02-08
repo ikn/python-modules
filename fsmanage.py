@@ -406,6 +406,8 @@ buttons: the buttons attribute of a Buttons instance.
 
     def _rename (self, paths):
         """Rename the first of the given TreeModel paths."""
+        if not paths:
+            return
         path = paths[0]
         self._model[path][COL_EDITABLE] = True
         self._edit(path)
@@ -427,7 +429,7 @@ buttons: the buttons attribute of a Buttons instance.
             # unedit
             row[COL_EDITABLE] = False
             return
-        if self.backend.move([(old, new)]):
+        if self.backend.move((old, new)):
             self.refresh(True)
         else:
             # failed; reselect
