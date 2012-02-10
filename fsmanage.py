@@ -117,6 +117,7 @@ buttons: the buttons attribute of a Buttons instance.
         self._cache = {}
         self._clipboard = None
         self._history = [self.path]
+        self._hist_sel = {}
         self._hist_pos = 0
         self.buttons = None
         self.address_bar = None
@@ -487,26 +488,40 @@ buttons: the buttons attribute of a Buttons instance.
         """Refresh the directory listing."""
         self._refresh()
 
-    def _refresh (self, purge_cache = False, *changes):
+    def _refresh (self, purge_cache = False, *changes, preserve_sel = True):
         """Really refresh the directory listing.
 
-_refresh(purge_cache = False, *changes)
+_refresh(purge_cache = False, *changes, preserve_sel = True)
 
 purge_cache: whether to ignore any cached version of this directory.
 changes: file/directory names in the current directory that will change over
          the refresh.  Each is an (old_name, new_name) tuple; for new files,
          old_name should be None.
+preserve_sel: whether to try to preserve the selection over the refresh
+              (keyword-only).
 
 """
-        # get selection
-        selected = set(self.get_selected_files())
-        for old, new in changes:
-            if old is not None:
-                try:
-                    selected.remove(old)
-                except KeyError:
-                    continue
-            selected.add(new)
+        path = self.path
+        # get stored selection
+        try:
+            selected = self._hist_sel[tuple(path)]
+        except KeyError:
+            sel_from_hist = False
+            if preserve_sel:
+                # else get current selection with changes
+                selected = set(self.get_selected_files())
+                for old, new in changes:
+                    if old is not None:
+                        try:
+                            selected.remove(old)
+                        except KeyError:
+                            continue
+                    selected.add(new)
+            else:
+                selected = []
+        else:
+            sel_from_hist = True
+            del self._hist_sel[tuple(path)]
         # clear model
         model = self._model
         model.clear()
@@ -514,13 +529,13 @@ changes: file/directory names in the current directory that will change over
         try:
             if purge_cache:
                 raise KeyError()
-            items = self._cache[tuple(self.path)]
+            items = self._cache[tuple(path)]
         except KeyError:
             # request listing
-            items = self.backend.list_dir(self.path)
+            items = self.backend.list_dir(path)
             # store in cache
             if self.cache:
-                self._cache[tuple(self.path)] = items
+                self._cache[tuple(path)] = items
         # disable sorting
         # FIXME: -2 should be UNSORTED_SORT_COLUMN_ID, but I can't find it
         model.set_sort_column_id(-2, gtk.SortType.ASCENDING)
@@ -530,7 +545,6 @@ changes: file/directory names in the current directory that will change over
             cb = cb[0] if cb[1] else False
         DIR = gtk.STOCK_DIRECTORY
         FILE = gtk.STOCK_FILE
-        path = self.path
         for name, is_dir in items:
             icon = DIR if is_dir else FILE
             if cb and path + [name] in cb:
@@ -552,7 +566,7 @@ changes: file/directory names in the current directory that will change over
             except KeyError:
                 pass
             else:
-                if name in changes_new:
+                if name in changes_new or sel_from_hist:
                     new_selected.append(names[name])
         # if selected anything new, scroll to the first of these
         if new_selected:
@@ -573,13 +587,14 @@ tell_address_bar: whether to notify the AddressBar instance associated with
         path = list(path)
         if path == self.path:
             return
-        self.path = path
         # history
         if add_to_hist:
             self._hist_pos += 1
             self._history = self._history[:self._hist_pos] + [path]
+        self._hist_sel[tuple(self.path)] = self.get_selected_files()
+        self.path = path
         # file listing
-        self.refresh()
+        self._refresh(preserve_sel = False)
         # address bar
         if tell_address_bar and self.address_bar is not None:
             self.address_bar.set_path(path)
