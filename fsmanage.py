@@ -523,11 +523,20 @@ changes: file/directory names in the current directory that will change over
         # restore selection
         names = {row[COL_NAME]: i for i, row in enumerate(model)}
         sel = self.get_selection()
+        new_selected = []
+        changes_new = [new for old, new in changes]
         for name in selected:
             try:
                 sel.select_path(names[name])
             except KeyError:
                 pass
+            else:
+                if name in changes_new:
+                    new_selected.append(names[name])
+        # if selected anything new, scroll to the first of these
+        if new_selected:
+            # FIXME: use_align = False doesn't seem to be working
+            self.scroll_to_cell(min(new_selected))
 
     def set_path (self, path, add_to_hist = True, tell_address_bar = True):
         """Set the current path.
