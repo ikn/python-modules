@@ -1,7 +1,7 @@
 """A file manager for an arbitrary filesystem backend.
 
 Python version: 3.
-Release: 2.
+Release: 2-dev.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -20,7 +20,9 @@ buttons
 
 # TODO:
 # - hide bits of the addressbar breadcrumbs if it gets bigger than its parent
-# - refresh should preserve selection
+#   - hide start until the current one, and show a '<' button that drops down a
+#     menu with hidden bits
+#   - then, if necessary, hide end until the current one
 # - should remember selection on back/forward
 # - if drag from an already selected file, drag and drop it/multiple instead of
 #   changing selection
@@ -146,6 +148,7 @@ buttons: the buttons attribute of a Buttons instance.
         # FIXME: -1 should be DEFAULT_SORT_COLUMN_ID, but I can't find it
         self._model.set_sort_column_id(-1, gtk.SortType.ASCENDING)
         # accelerators
+        # TODO: escape with address bar focused does self.grab_focus()
         group = self.accel_group = gtk.AccelGroup()
         accels = [
             ('F2', self._rename_selected),
@@ -379,8 +382,9 @@ buttons: the buttons attribute of a Buttons instance.
             files, cut = cb
             path = self.path
             f = self.backend.move if cut else self.backend.copy
-            if f(*((f, path + [f[-1]]) for f in files)):
-                self.refresh(True)
+            if f(*((old, path + [old[-1]]) for old in files)):
+                self.get_selection().unselect_all()
+                self._refresh(True, *((None, old[-1]) for old in files))
                 if cut:
                     self._uncut()
 
@@ -392,7 +396,7 @@ buttons: the buttons attribute of a Buttons instance.
         if files:
             if self.backend.delete(*files):
                 # TODO: select next file if any, else previous if any
-                self.refresh(True)
+                self._refresh(True)
 
     def _rename_selected (self):
         """Rename the selected files."""
@@ -430,7 +434,7 @@ buttons: the buttons attribute of a Buttons instance.
             row[COL_EDITABLE] = False
             return
         if self.backend.move((old, new)):
-            self.refresh(True)
+            self._refresh(True, (old[-1], new[-1]))
         else:
             # failed; reselect
             self._edit(path)
@@ -448,7 +452,7 @@ buttons: the buttons attribute of a Buttons instance.
         if not self.backend.new_dir(self.path + [name]):
             # failed
             return
-        self.refresh(True)
+        self._refresh(True)
         # find it in the tree
         j = None
         for i, row in enumerate(self._model):
@@ -458,9 +462,31 @@ buttons: the buttons attribute of a Buttons instance.
         if j is not None:
             self._rename([i])
 
-    def refresh (self, purge_cache = False):
+    def refresh (self):
         """Refresh the directory listing."""
-        # TODO: preserve selection if possible
+        self._refresh()
+
+    def _refresh (self, purge_cache = False, *changes):
+        """Really refresh the directory listing.
+
+_refresh(purge_cache = False, *changes)
+
+purge_cache: whether to ignore any cached version of this directory.
+changes: file/directory names in the current directory that will change over
+         the refresh.  Each is an (old_name, new_name) tuple; for new files,
+         old_name should be None.
+
+"""
+        # get selection
+        selected = set(self.get_selected_files())
+        for old, new in changes:
+            if old is not None:
+                try:
+                    selected.remove(old)
+                except KeyError:
+                    continue
+            selected.add(new)
+        # clear model
         model = self._model
         model.clear()
         # try to retrieve from cache
@@ -494,6 +520,14 @@ buttons: the buttons attribute of a Buttons instance.
         # enable sorting again
         # FIXME: -1 should be DEFAULT_SORT_COLUMN_ID, but I can't find it
         model.set_sort_column_id(-1, gtk.SortType.ASCENDING)
+        # restore selection
+        names = {row[COL_NAME]: i for i, row in enumerate(model)}
+        sel = self.get_selection()
+        for name in selected:
+            try:
+                sel.select_path(names[name])
+            except KeyError:
+                pass
 
     def set_path (self, path, add_to_hist = True, tell_address_bar = True):
         """Set the current path.
@@ -552,7 +586,7 @@ tell_address_bar: whether to notify the AddressBar instance associated with
         return self.get_selection().get_selected_rows()[1]
 
     def get_selected_files (self):
-        """Get the paths of the currently selected files and directories."""
+        """Get the names of the currently selected files and directories."""
         model, paths = self.get_selection().get_selected_rows()
         return [model[path][COL_NAME] for path in paths]
 
