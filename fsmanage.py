@@ -799,12 +799,13 @@ This does not affect the manager.
             self.breadcrumbs.show()
 
 
-def buttons (manager):
+def buttons (manager, labels = True):
     """Returns some buttons to work with a Manager.
 
-buttons(manager) -> button_list
+buttons(manager, labels = True) -> button_list
 
 manager: a Manager instance.
+labels: show labels on the buttons.
 
 button_list: a list of Gtk.Button instances: back, forward, up, new, in that
              order.  If manager is read-only, new is omitted.
@@ -832,6 +833,11 @@ button_list: a list of Gtk.Button instances: back, forward, up, new, in that
         buttons.append(b)
         b.set_tooltip_text(tooltip)
         b.connect('clicked', f, cb, *cb_args)
+    # remove button labels
+    if not labels:
+        for b in buttons:
+            box = b.get_child().get_child()
+            box.remove(box.get_children()[1])
     # visibility
     # only allow back if have history
     buttons[0].set_sensitive(m._hist_pos != 0)
