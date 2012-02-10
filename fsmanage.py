@@ -395,7 +395,28 @@ buttons: the buttons attribute of a Buttons instance.
             files = [path + [name] for name in self.get_selected_files()]
         if files:
             if self.backend.delete(*files):
-                # TODO: select next file if any, else previous if any
+                # select next file (after first deleted), else previous, if any
+                prev = None
+                after = None
+                past = False
+                this = files[0][-1]
+                these = [f[-1] for f in files]
+                for i, row in enumerate(self._model):
+                    name = row[COL_NAME]
+                    if name == this:
+                        past = True
+                    elif name in these:
+                        continue
+                    elif past:
+                        after = i
+                        break
+                    else:
+                        prev = i
+                if after is not None:
+                    self.get_selection().select_path(after)
+                elif prev is not None:
+                    self.get_selection().select_path(prev)
+                # refresh
                 self._refresh(True)
 
     def _rename_selected (self):
