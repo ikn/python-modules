@@ -23,13 +23,11 @@ buttons
 #   - hide start until the current one, and show a '<' button that drops down a
 #     menu with hidden bits
 #   - then, if necessary, hide end until the current one
-# - should remember selection on back/forward
 # - if drag from an already selected file, drag and drop it/multiple instead of
 #   changing selection
-# - allow drag and drop between instances
-# - searching doesn't work
+# - allow drag and drop between instances; middle-click to copy
 
-from gi.repository import Gtk as gtk
+from gi.repository import Gtk as gtk, Gdk as gdk
 
 COL_IS_DIR = 0
 COL_ICON = 1
@@ -39,6 +37,8 @@ COL_EDITABLE = 4
 
 NAME_COLOUR = '#000'
 NAME_COLOUR_CUT = '#666'
+
+dp = gtk.TreeViewDropPosition
 
 class Manager (gtk.TreeView):
     """A filesystem viewer (and manager).  Subclass of Gtk.TreeView.
@@ -126,12 +126,23 @@ buttons: the buttons attribute of a Buttons instance.
         self._model = gtk.ListStore(bool, str, str, str, bool)
         gtk.TreeView.__init__(self, self._model)
         self.get_selection().set_mode(gtk.SelectionMode.MULTIPLE)
-        self.set_search_column(1)
+        self.set_search_column(COL_NAME)
         self.set_enable_tree_lines(True)
         self.set_headers_visible(False)
         self.set_rubber_banding(True)
         self.set_rules_hint(True)
+        # drag and drop
+        mod_mask = gdk.ModifierType.BUTTON1_MASK
+        action = gdk.DragAction.COPY
+        self.enable_model_drag_source(mod_mask, [], action)
+        self.drag_source_add_text_targets()
+        self.enable_model_drag_dest([], action)
+        self.drag_dest_add_text_targets()
         # signals
+        #self.connect('drag-motion', self._drag_motion)
+        self.connect('drag-data-get', self._get_drag_data)
+        #self.connect('drag-leave', self._drag_leave)
+        self.connect('drag-data-received', self._received_drag_data)
         self.connect('row-activated', self._open)
         self.connect('button-press-event', self._click)
         # columns
@@ -341,6 +352,35 @@ buttons: the buttons attribute of a Buttons instance.
             # show menu
             self._show_item_menu(items, menu_args)
             return rtn
+
+    #def _drag_motion (self, widget, context, x, y, time):
+        #"""Drag moved inside the widget."""
+        #dest = self.get_dest_row_at_pos(x, y)
+        #if dest is not None:
+            #dest, pos = dest
+            #if pos not in (dp.BEFORE, dp.AFTER):
+                #self.set_drag_dest_row(dest, pos)
+
+    def _get_drag_data (self, widget, context, sel_data, info, time):
+        # HACK: I can only work out how to do text, so I don't even care shut
+        # up go away
+        sel = self._get_selected_paths()
+        assert len(sel) == 1
+        sel_data.set_text(chr(sel[0].get_indices()[0]), -1)
+
+    #def _drag_leave (self, widget, context, time):
+        #"""Drag left the widget."""
+        #self.set_drag_dest_row(None, dp.INTO_OR_AFTER)
+
+    def _received_drag_data (self, widget, context, x, y, sel_data, info, time):
+        dest = self.get_dest_row_at_pos(x, y)
+        if dest is not None:
+            row = self._model[dest[0]]
+            if row[COL_IS_DIR]:
+                source = self._model[ord(sel_data.get_text())][COL_NAME]
+                dest = self.path + [row[COL_NAME], source]
+                self.backend.move((self.path + [source], dest))
+                self._refresh(True)
 
     def _open (self, view, path, column = None):
         """Open a directory or file."""
