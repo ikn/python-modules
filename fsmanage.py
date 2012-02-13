@@ -23,11 +23,19 @@ buttons
 #   - hide start until the current one, and show a '<' button that drops down a
 #     menu with hidden bits
 #   - then, if necessary, hide end until the current one
-# - if drag from an already selected file, drag and drop it/multiple instead of
-#   changing selection
 # - allow drag and drop between instances; middle-click to copy
+# - drag and drop needs type MOVE so we can delete from other instance on
+#   success (but COPY for middle-click)
+
+from pickle import dumps, loads
+from base64 import encodebytes, decodebytes
 
 from gi.repository import Gtk as gtk, Gdk as gdk
+
+to_str = lambda o: encodebytes(dumps(o)).decode()
+from_str = lambda s: loads(decodebytes(s.encode()))
+
+IDENTIFIER = 'fsmanage'
 
 COL_IS_DIR = 0
 COL_ICON = 1
@@ -52,7 +60,8 @@ by ['some', 'path', 'current_dir'].
 
     CONSTRUCTOR
 
-Manager(backend, path = [], read_only = False, cache = False)
+Manager(backend, path = [], read_only = False, cache = False,
+        identifier = 'fsmanage')
 
 backend: an object with methods as follows.  Any method that changes the
          directory tree should not return until any call to list_dir will
@@ -70,10 +79,13 @@ backend: an object with methods as follows.  Any method that changes the
          each return True if the action is taken, else False.
 
     copy: takes a list of (old_path, new_path) tuples to copy files or
-          directories.
+          directories.  If a file/directory is dragged from another Manager
+          instance (in another window/program, even), old_path is a
+          (True, identifier, path_in_other_manager) tuple, where identifier is
+          as given in the constructor of the source Manager instance (or its
+          return value, if a function).
 
-    move: takes a list of (old_path, new_path) tuples to move files or
-          directories.
+    move: takes arguments like copy to move files or directories.
 
     delete: takes file or directory paths as separate arguments to delete.
 
@@ -88,6 +100,11 @@ read_only: whether the directory tree is read-only; if True, things like copy,
 cache: whether to cache directory contents when requested.  There is no need to
        clear the cache after any changes that go through this class and the
        given backend (copy, delete, etc.); this is done automatically.
+identifier: this is some (picklable) data that is passed to the copy method of
+            the backend when a file is drag-and-dropped from a different
+            Manager instance.  This can optionally be a function instead, that
+            takes the path of the dragged file and returns such an identifier
+            string.
 
     METHODS
 
@@ -109,11 +126,13 @@ buttons: the buttons attribute of a Buttons instance.
 
 """
 
-    def __init__ (self, backend, path = [], read_only = False, cache = False):
+    def __init__ (self, backend, path = [], read_only = False, cache = False,
+                  identifier = 'fsmanage'):
         self.backend = backend
         self.path = list(path)
         self.read_only = read_only
         self.cache = cache
+        self.identifier = identifier
         self._cache = {}
         self._clipboard = None
         self._history = [self.path]
@@ -353,33 +372,45 @@ buttons: the buttons attribute of a Buttons instance.
             self._show_item_menu(items, menu_args)
             return rtn
 
-    #def _drag_motion (self, widget, context, x, y, time):
-        #"""Drag moved inside the widget."""
-        #dest = self.get_dest_row_at_pos(x, y)
-        #if dest is not None:
-            #dest, pos = dest
-            #if pos not in (dp.BEFORE, dp.AFTER):
-                #self.set_drag_dest_row(dest, pos)
-
     def _get_drag_data (self, widget, context, sel_data, info, time):
-        # HACK: I can only work out how to do text, so I don't even care shut
-        # up go away
+        """Retrieve drag data from this drag source."""
         sel = self._get_selected_paths()
         assert len(sel) == 1
-        sel_data.set_text(chr(sel[0].get_indices()[0]), -1)
-
-    #def _drag_leave (self, widget, context, time):
-        #"""Drag left the widget."""
-        #self.set_drag_dest_row(None, dp.INTO_OR_AFTER)
+        file_path = self.path + [self._model[sel[0]][COL_NAME]]
+        ident = self.identifier
+        if callable(ident):
+            ident = ident(file_path)
+        data = to_str((IDENTIFIER, ident, id(self), file_path))
+        sel_data.set_text(data, -1)
 
     def _received_drag_data (self, widget, context, x, y, sel_data, info, time):
+        """Handle data dropped on this drag destination."""
+        # check data is valid
+        data = from_str(sel_data.get_text())
+        if len(data) != 4 or data[0] != IDENTIFIER:
+            return
+        source = data[3]
+        # get drop location
         dest = self.get_dest_row_at_pos(x, y)
         if dest is not None:
             row = self._model[dest[0]]
-            if row[COL_IS_DIR]:
-                source = self._model[ord(sel_data.get_text())][COL_NAME]
-                dest = self.path + [row[COL_NAME], source]
-                self.backend.move((self.path + [source], dest))
+            if row[COL_IS_DIR] and dest[1] not in (dp.BEFORE, dp.AFTER):
+                dest = self.path + [row[COL_NAME], source[-1]]
+            else:
+                dest = None
+        # do something
+        if data[2] == id(self):
+            # dragged from this instance
+            # can't drop into files or empty space
+            if dest is not None:
+                if self.backend.move((source, dest)):
+                    self._refresh(True)
+        else:
+            # dragged from another instance
+            if dest is None:
+                # drag to this dir
+                dest = self.path + [source[-1]]
+            if self.backend.copy(((True, data[1], source), dest)):
                 self._refresh(True)
 
     def _open (self, view, path, column = None):
