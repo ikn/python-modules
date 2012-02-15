@@ -7,7 +7,7 @@ as possible.
 Depends on miscutil.
 
 Python version: 2.
-Release: 3.
+Release: 4.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -325,7 +325,7 @@ then:
                 e.append(HTMLTextNode(content))
                 e._source = self._source
                 e._source_start = offset
-                e._source_end = tag_end
+                e._source_end = offset + len(content)
                 e._set_attrs()
             else:
                 e = HTMLTree(content, verbose, not_mine, offset, self._source)

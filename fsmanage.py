@@ -1,5 +1,8 @@
 """A file manager for an arbitrary filesystem backend.
 
+A note on end-user usage: drag-and-drop moves with left-click, and copies with
+middle-click or ctrl-left-click.
+
 Python version: 3.
 Release: 2-dev.
 
@@ -26,6 +29,8 @@ buttons
 # - allow drag and drop between instances; middle-click to copy
 # - drag and drop needs type MOVE so we can delete from other instance on
 #   success (but COPY for middle-click)
+# - possible to get what's being dragged instead of checking selection?
+# - get mod_mask before finish (drag_motion and store in context, somehow)
 
 from pickle import dumps, loads
 from base64 import encodebytes, decodebytes
@@ -61,7 +66,7 @@ by ['some', 'path', 'current_dir'].
     CONSTRUCTOR
 
 Manager(backend, path = [], read_only = False, cache = False,
-        identifier = 'fsmanage')
+        drag_to_select = True, identifier = 'fsmanage')
 
 backend: an object with methods as follows.  Any method that changes the
          directory tree should not return until any call to list_dir will
@@ -100,6 +105,9 @@ read_only: whether the directory tree is read-only; if True, things like copy,
 cache: whether to cache directory contents when requested.  There is no need to
        clear the cache after any changes that go through this class and the
        given backend (copy, delete, etc.); this is done automatically.
+drag_to_select: whether dragging across unselected files will select them
+                (otherwise it will drag them; in the first case, files can only
+                be dragged if they are selected first).
 identifier: this is some (picklable) data that is passed to the copy method of
             the backend when a file is drag-and-dropped from a different
             Manager instance.  This can optionally be a function instead, that
@@ -127,7 +135,7 @@ buttons: the buttons attribute of a Buttons instance.
 """
 
     def __init__ (self, backend, path = [], read_only = False, cache = False,
-                  identifier = 'fsmanage'):
+                  drag_to_select = True, identifier = 'fsmanage'):
         self.backend = backend
         self.path = list(path)
         self.read_only = read_only
@@ -148,20 +156,20 @@ buttons: the buttons attribute of a Buttons instance.
         self.set_search_column(COL_NAME)
         self.set_enable_tree_lines(True)
         self.set_headers_visible(False)
-        self.set_rubber_banding(True)
+        self.set_rubber_banding(drag_to_select)
         self.set_rules_hint(True)
         # drag and drop
-        mod_mask = gdk.ModifierType.BUTTON1_MASK
-        action = gdk.DragAction.COPY
+        m = gdk.ModifierType
+        mod_mask = m.BUTTON1_MASK | m.BUTTON2_MASK
+        action = gdk.DragAction.COPY | gdk.DragAction.MOVE
         self.enable_model_drag_source(mod_mask, [], action)
         self.drag_source_add_text_targets()
         self.enable_model_drag_dest([], action)
         self.drag_dest_add_text_targets()
         # signals
-        #self.connect('drag-motion', self._drag_motion)
         self.connect('drag-data-get', self._get_drag_data)
-        #self.connect('drag-leave', self._drag_leave)
         self.connect('drag-data-received', self._received_drag_data)
+        self.connect('drag-data-delete', self._drag_del)
         self.connect('row-activated', self._open)
         self.connect('button-press-event', self._click)
         # columns
@@ -375,15 +383,19 @@ buttons: the buttons attribute of a Buttons instance.
     def _get_drag_data (self, widget, context, sel_data, info, time):
         """Retrieve drag data from this drag source."""
         sel = self._get_selected_paths()
-        assert len(sel) == 1
-        file_path = self.path + [self._model[sel[0]][COL_NAME]]
-        ident = self.identifier
-        if callable(ident):
-            ident = ident(file_path)
-        data = to_str((IDENTIFIER, ident, id(self), file_path))
-        sel_data.set_text(data, -1)
+        if len(sel) != 1:
+            # strange; user probably did ctrl-drag
+            data = 'failed'
+        else:
+            file_path = self.path + [self._model[sel[0]][COL_NAME]]
+            ident = self.identifier
+            if callable(ident):
+                ident = ident(file_path)
+            data = (IDENTIFIER, ident, id(self), file_path)
+        sel_data.set_text(to_str(data), -1)
 
-    def _received_drag_data (self, widget, context, x, y, sel_data, info, time):
+    def _received_drag_data (self, widget, context, x, y, sel_data, info,
+                             time):
         """Handle data dropped on this drag destination."""
         # check data is valid
         data = from_str(sel_data.get_text())
@@ -399,19 +411,38 @@ buttons: the buttons attribute of a Buttons instance.
             else:
                 dest = None
         # do something
+        success = False
+        print(self.get_display().get_pointer()[3])
+        move = True
         if data[2] == id(self):
             # dragged from this instance
             # can't drop into files or empty space
             if dest is not None:
-                if self.backend.move((source, dest)):
-                    self._refresh(True)
+                f = self.backend.move if move else self.backend.copy
+                if f((source, dest)):
+                    if move:
+                        self._refresh(True)
+                    # else no need to refresh: not copying into current dir
+                    success = True
+                    move = False
         else:
             # dragged from another instance
             if dest is None:
                 # drag to this dir
                 dest = self.path + [source[-1]]
             if self.backend.copy(((True, data[1], source), dest)):
-                self._refresh(True)
+                success = True
+                if dest[:-1] == self.path:
+                    # copying into this dir
+                    self._refresh(True)
+        context.finish(success, move and success, time)
+
+    def _drag_del (self, widget, context):
+        """Handle delete after move."""
+        print('del')
+        source = from_str(sel_data.get_text())[3]
+        if self.backend._delete(source):
+            self._refresh(True)
 
     def _open (self, view, path, column = None):
         """Open a directory or file."""
