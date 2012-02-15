@@ -26,11 +26,6 @@ buttons
 #   - hide start until the current one, and show a '<' button that drops down a
 #     menu with hidden bits
 #   - then, if necessary, hide end until the current one
-# - allow drag and drop between instances; middle-click to copy
-# - drag and drop needs type MOVE so we can delete from other instance on
-#   success (but COPY for middle-click)
-# - possible to get what's being dragged instead of checking selection?
-# - get mod_mask before finish (drag_motion and store in context, somehow)
 
 from pickle import dumps, loads
 from base64 import encodebytes, decodebytes
@@ -52,6 +47,8 @@ NAME_COLOUR = '#000'
 NAME_COLOUR_CUT = '#666'
 
 dp = gtk.TreeViewDropPosition
+MOVE_BTN = gdk.ModifierType.BUTTON1_MASK
+COPY_BTN = gdk.ModifierType.BUTTON2_MASK
 
 class Manager (gtk.TreeView):
     """A filesystem viewer (and manager).  Subclass of Gtk.TreeView.
@@ -159,14 +156,14 @@ buttons: the buttons attribute of a Buttons instance.
         self.set_rubber_banding(drag_to_select)
         self.set_rules_hint(True)
         # drag and drop
-        m = gdk.ModifierType
-        mod_mask = m.BUTTON1_MASK | m.BUTTON2_MASK
+        mod_mask = MOVE_BTN | COPY_BTN
         action = gdk.DragAction.COPY | gdk.DragAction.MOVE
         self.enable_model_drag_source(mod_mask, [], action)
         self.drag_source_add_text_targets()
         self.enable_model_drag_dest([], action)
         self.drag_dest_add_text_targets()
         # signals
+        self.connect('drag-begin', self._drag_begin)
         self.connect('drag-data-get', self._get_drag_data)
         self.connect('drag-data-received', self._received_drag_data)
         self.connect('drag-data-delete', self._drag_del)
@@ -380,6 +377,11 @@ buttons: the buttons attribute of a Buttons instance.
             self._show_item_menu(items, menu_args)
             return rtn
 
+    def _drag_begin (self, widget, context):
+        """Begin dragging."""
+        mods = self.get_display().get_pointer()[3]
+        self._drag_copying = mods & COPY_BTN
+
     def _get_drag_data (self, widget, context, sel_data, info, time):
         """Retrieve drag data from this drag source."""
         sel = self._get_selected_paths()
@@ -391,7 +393,9 @@ buttons: the buttons attribute of a Buttons instance.
             ident = self.identifier
             if callable(ident):
                 ident = ident(file_path)
-            data = (IDENTIFIER, ident, id(self), file_path)
+            data = (IDENTIFIER, ident, id(self), file_path,
+                    not self._drag_copying)
+            self._last_drag_data = data
         sel_data.set_text(to_str(data), -1)
 
     def _received_drag_data (self, widget, context, x, y, sel_data, info,
@@ -399,7 +403,8 @@ buttons: the buttons attribute of a Buttons instance.
         """Handle data dropped on this drag destination."""
         # check data is valid
         data = from_str(sel_data.get_text())
-        if len(data) != 4 or data[0] != IDENTIFIER:
+        if len(data) != 5 or data[0] != IDENTIFIER:
+            context.finish(False, False, time)
             return
         source = data[3]
         # get drop location
@@ -412,8 +417,7 @@ buttons: the buttons attribute of a Buttons instance.
                 dest = None
         # do something
         success = False
-        print(self.get_display().get_pointer()[3])
-        move = True
+        move = data[4]
         if data[2] == id(self):
             # dragged from this instance
             # can't drop into files or empty space
@@ -439,9 +443,8 @@ buttons: the buttons attribute of a Buttons instance.
 
     def _drag_del (self, widget, context):
         """Handle delete after move."""
-        print('del')
-        source = from_str(sel_data.get_text())[3]
-        if self.backend._delete(source):
+        source = self._last_drag_data[3]
+        if self.backend.delete(source):
             self._refresh(True)
 
     def _open (self, view, path, column = None):
@@ -830,10 +833,13 @@ mode_button: the button used to switch display modes.
         ok_b.connect('clicked', self._set_path_entry)
         self.address.pack_start(ok_b, False, False, 0)
         # breadcrumbs
-        self.breadcrumbs = b = gtk.Box()
-        self.pack_start(b, True, True, 0)
+        self.breadcrumbs = bc = gtk.Box()
+        self.pack_start(bc, True, True, 0)
+        #scrollback_b = gtk.Button('\u25bc')
+        #bc.pack_start(scrollback_b, False, False, 0)
+        #scrollback_b.connect('toggled', self._breadcrumb_toggle)
         root_b = gtk.ToggleButton(None, gtk.STOCK_HARDDISK)
-        self.breadcrumbs.pack_start(root_b, False, False, 0)
+        bc.pack_start(root_b, False, False, 0)
         root_b.connect('toggled', self._breadcrumb_toggle)
         # remove button labels
         for b in (mode_b, root_b, ok_b):
