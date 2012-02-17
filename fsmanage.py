@@ -26,6 +26,8 @@ buttons
 #   - hide start until the current one, and show a '<' button that drops down a
 #     menu with hidden bits
 #   - then, if necessary, hide end until the current one
+# - multi-DND
+# - allow resizing of breadcrumbs (gtk.Grid) smaller than its current size
 
 from pickle import dumps, loads
 from base64 import encodebytes, decodebytes
@@ -768,8 +770,8 @@ dirs: if none are given, clear all cache; otherwise, clear the cache for these
         if is_dir1 != is_dir2:
             return 1 if is_dir2 else -1
         # if either name is None, it's not in the model yet
-        name1 = row1[COL_NAME]
-        name2 = row2[COL_NAME]
+        name1 = row1[COL_NAME].lower()
+        name2 = row2[COL_NAME].lower()
         if None in (name1, name2):
             return 0
         # alphabetical
@@ -807,6 +809,7 @@ address: the 'text' part of the bar: the entry and its 'OK' button.
 entry: the Gtk.Entry used in the bar.
 breadcrumbs: the breadcrumbs buttons used in the bar.
 mode_button: the button used to switch display modes.
+path: the current path shown (in list form).
 
 """
     def __init__ (self, manager, sep = '/', prepend_sep = True,
@@ -833,14 +836,22 @@ mode_button: the button used to switch display modes.
         ok_b.connect('clicked', self._set_path_entry)
         self.address.pack_start(ok_b, False, False, 0)
         # breadcrumbs
-        self.breadcrumbs = bc = gtk.Box()
-        self.pack_start(bc, True, True, 0)
-        #scrollback_b = gtk.Button('\u25bc')
-        #bc.pack_start(scrollback_b, False, False, 0)
-        #scrollback_b.connect('toggled', self._breadcrumb_toggle)
-        root_b = gtk.ToggleButton(None, gtk.STOCK_HARDDISK)
-        bc.pack_start(root_b, False, False, 0)
-        root_b.connect('toggled', self._breadcrumb_toggle)
+        self._bc_path = []
+        self._max_bc_size = None
+        self.breadcrumbs = gtk.Grid()
+        self.pack_start(self.breadcrumbs, True, True, 0)
+        self.breadcrumbs.connect('size-allocate', self._resize_breadcrumbs)
+        # make scrollback button/root entry
+        self._scrollback_b = gtk.Button('\u25bc')
+        #self._scrollback_b.connect('clicked', )
+        self._root_b = root_b = gtk.ToggleButton(None, gtk.STOCK_HARDDISK)
+        root_b.connect('toggled', self._breadcrumb_toggle, 0)
+        root_b.show()
+        self._root_i = root_i = gtk.MenuItem(gtk.STOCK_HARDDISK)
+        #root_i.set_use_stock(True)
+        # TODO: root_i callback
+        # TODO: remove text from root_i
+        root_i.show()
         # remove button labels
         for b in (mode_b, root_b, ok_b):
             box = b.get_child().get_child()
@@ -848,12 +859,13 @@ mode_button: the button used to switch display modes.
 
         self.show_all()
         self.hide()
-        self.update()
+        self.set_path([])
 
     def update (self):
         """Update the current displayed path."""
         self.set_mode(self.mode_button.get_active(), False)
-        self.set_path(self.manager.path)
+        self._update_entry()
+        self._update_breadcrumbs()
 
     def set_path (self, path):
         """Set the path displayed to the one given (in list form).
@@ -861,52 +873,93 @@ mode_button: the button used to switch display modes.
 This does not affect the manager.
 
 """
-        self._set_entry_path(path)
-        self._set_breadcrumbs_path(path)
+        self.path = list(path)
+        self.update()
 
-    def _set_entry_path (self, path):
-        """Set the path in the entry to the one given (in list form)."""
+    def _update_entry (self):
+        """Update the path in the entry."""
         sep = self.sep
-        path = sep.join(path)
+        path = sep.join(self.path)
         if self.prepend_sep:
             path = sep + path
         if self.append_sep:
             path += sep
         self.entry.set_text(path)
 
-    def _set_breadcrumbs_path (self, path):
-        """Set the breadcrumbs path to the one given (in list form)."""
-        b = self.breadcrumbs
-        self._working = True
+    def _update_breadcrumbs (self):
+        """Update the breadcrumbs path bar."""
+        path = self.path
+        bc = self.breadcrumbs
         # remove children we don't want any more
-        root, *cs = b.get_children()
+        bc_path = self._bc_path
+        full_path = path + [None] * (len(bc_path) - len(path))
         rm = False
-        to_rm = []
-        for c, d in zip(cs, path + [None] * (len(cs) - len(path))):
-            if not rm:
-                if d is not None and c.get_label() != d:
-                    rm = True
-                else:
-                    c.set_active(False)
+        i = 0
+        while i < len(bc_path):
+            bc_d = bc_path[i]
+            d = full_path[i]
+            if not rm and d is not None and bc_d != d:
+                rm = True
             if rm:
-                b.remove(c)
-                to_rm.append(c)
-                c.destroy()
-        for c in to_rm:
-            cs.remove(c)
+                bc_path.pop(i)
+            else:
+                i += 1
         # add extra children
-        for d in path[len(cs):]:
-            c = gtk.ToggleButton(d)
-            self.breadcrumbs.pack_start(c, False, False, 0)
-            cs.append(c)
-            c.connect('toggled', self._breadcrumb_toggle)
-            c.show()
-        # set root activity
-        b.get_children()[0].set_active(not path)
-        # set at most one child active
-        if path:
-            cs[len(path) - 1].set_active(True)
-        self._working = False
+        for d in path[len(bc_path):]:
+            bc_path.append(d)
+        # remove all children from bar
+        for c in bc.get_children():
+            bc.remove(c)
+        # add scrollback button
+        bc.attach(self._scrollback_b, 0, 0, 1, 1)
+        # add children back until we start using more space
+        max_size = self._max_bc_size
+        self._bc_hidden = 0
+
+        def add_button (i, d):
+            """Add a dir button to the breadcrumbs bar."""
+            b = gtk.ToggleButton(d)
+            bc.attach(b, i, 0, 1, 1)
+            b.connect('toggled', self._breadcrumb_toggle, i)
+            # needs to be visible before we can tell how much space it takes up
+            b.show()
+            if max_size is not None and max_size < bc.get_preferred_width()[0]:
+                # got too big
+                if len(bc.get_children()) != 1:
+                    # not the current dir: remove this child and stop
+                    bc.remove(b)
+                return False
+            return b
+
+        done = False
+        depth = len(path)
+        # from current to first
+        for i, d in enumerate(reversed(bc_path[:depth])):
+            b = add_button(depth - i, d)
+            if b is False:
+                # too big
+                done = True
+                self._bc_hidden = depth + 1 - i
+                break
+            elif i == 0:
+                # current dir: make active
+                self._working = True
+                b.set_active(True)
+                self._working = False
+        if not done:
+            # everything fits: don't need the scrollback button
+            bc.remove(self._scrollback_b)
+            # and now there's definitely space for root
+            bc.attach(self._root_b, 0, 0, 1, 1)
+            self._working = True
+            self._root_b.set_active(not path)
+            self._working = False
+            # after current
+            for i, d in enumerate(bc_path[depth:]):
+                if not add_button(depth + i + 1, d):
+                    break
+        # FIXME: stuff disappears at times
+        # FIXME: no root displayed initially
 
     def _set_manager_path (self, path):
         """Set the manager path to the one given (in list form)."""
@@ -919,7 +972,7 @@ This does not affect the manager.
         self.set_path(path)
         self._set_manager_path(path)
 
-    def _breadcrumb_toggle (self, b):
+    def _breadcrumb_toggle (self, b, i):
         """Callback for toggling one of the breadcrumb buttons."""
         if self._working:
             return
@@ -928,17 +981,17 @@ This does not affect the manager.
             self._working = True
             b.set_active(True)
             self._working = False
-        # get path
-        cs = self.breadcrumbs.get_children()
-        path = []
-        if not b.get_use_stock(): # else root
-            for c in cs[1:]:
-                path.append(c.get_label())
-                if c is b:
-                    break
+            return
         # set path
+        path = self._bc_path[:i]
         self.set_path(path)
         self._set_manager_path(path)
+
+    def _resize_breadcrumbs (self, bc, size):
+        """Update breadcrumbs for new size."""
+        if self._max_bc_size != size.width:
+            self._max_bc_size = size.width
+            self._update_breadcrumbs()
 
     def set_mode (self, mode, fix_button = True):
         """Set the display mode: True for an entry, False for breadcrumbs."""
