@@ -25,7 +25,6 @@ buttons
 # - address bar scrollback button action
 # - multi-DND
 # - allow resizing of breadcrumbs (gtk.Grid) smaller than its current size
-# - breadcrumbs still gets bigger, sometimes
 
 from pickle import dumps, loads
 from base64 import encodebytes, decodebytes
@@ -921,6 +920,28 @@ This does not affect the manager.
             path += sep
         self.entry.set_text(path)
 
+    def _set_manager_path (self, path):
+        """Set the manager path to the one given (in list form)."""
+        self.manager.set_path(path, tell_address_bar = False)
+        self.manager.grab_focus()
+
+    def _set_path_entry (self, widget):
+        """Set the path in the manager to the one in the entry."""
+        path = [d for d in self.entry.get_text().split(self.sep) if d]
+        self.set_path(path)
+        self._set_manager_path(path)
+
+    def set_mode (self, mode, fix_button = True):
+        """Set the display mode: True for an entry, False for breadcrumbs."""
+        if fix_button:
+            self.mode_button.set_active(mode)
+        if mode:
+            self.breadcrumbs.hide()
+            self.address.show()
+        else:
+            self.address.hide()
+            self.breadcrumbs.show()
+
     def _update_breadcrumbs (self):
         """Update the breadcrumbs path bar."""
         path = self.path
@@ -945,8 +966,8 @@ This does not affect the manager.
         # remove all children from bar
         for c in bc.get_children():
             bc.remove(c)
-        # add scrollback button
-        bc.attach(self._scrollback_b, 0, 0, 1, 1)
+        # add root button
+        bc.attach(self._root_b, 0, 0, 1, 1)
         # add children back until we start using more space
         max_size = self._max_bc_size
         self._bc_hidden = 0
@@ -981,30 +1002,20 @@ This does not affect the manager.
                 self._working = True
                 b.set_active(True)
                 self._working = False
-        if not done:
-            # everything fits: don't need the scrollback button
-            bc.remove(self._scrollback_b)
-            # and now there's definitely space for root
-            bc.attach(self._root_b, 0, 0, 1, 1)
+        if done:
+            # no room for everything: replace root with scrollback button
+            bc.remove(self._root_b)
+            bc.attach(self._scrollback_b, 0, 0, 1, 1)
+        else:
+            # everything fits: keep root button
             self._working = True
             self._root_b.set_active(not path)
             self._working = False
-            # after current
+            # add dirs after current as far as possible
             for i, d in enumerate(bc_path[depth:]):
                 if not add_button(depth + i + 1, d):
                     break
         return False
-
-    def _set_manager_path (self, path):
-        """Set the manager path to the one given (in list form)."""
-        self.manager.set_path(path, tell_address_bar = False)
-        self.manager.grab_focus()
-
-    def _set_path_entry (self, widget):
-        """Set the path in the manager to the one in the entry."""
-        path = [d for d in self.entry.get_text().split(self.sep) if d]
-        self.set_path(path)
-        self._set_manager_path(path)
 
     def _breadcrumb_toggle (self, b, i):
         """Callback for toggling one of the breadcrumb buttons."""
@@ -1055,17 +1066,6 @@ This does not affect the manager.
         menu.append(self._root_i)
         menu.show_all()
         menu.popup(None, None, None, None, 0, gtk.get_current_event_time())
-
-    def set_mode (self, mode, fix_button = True):
-        """Set the display mode: True for an entry, False for breadcrumbs."""
-        if fix_button:
-            self.mode_button.set_active(mode)
-        if mode:
-            self.breadcrumbs.hide()
-            self.address.show()
-        else:
-            self.address.hide()
-            self.breadcrumbs.show()
 
 
 def buttons (manager, labels = True):
