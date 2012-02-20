@@ -25,6 +25,7 @@ buttons
 # - address bar scrollback button action
 # - multi-DND
 # - allow resizing of breadcrumbs (gtk.Grid) smaller than its current size
+# - breadcrumbs still gets bigger, sometimes
 
 from pickle import dumps, loads
 from base64 import encodebytes, decodebytes
@@ -241,7 +242,6 @@ buttons: the buttons attribute of a Buttons instance.
                     item.set_use_underline(True)
                 if tooltip is not None:
                     item.set_tooltip_text(tooltip)
-                cb_ = cb
                 item.connect('activate', f, cb, *cb_args)
             menu.append(item)
         menu.show_all()
@@ -276,7 +276,6 @@ buttons: the buttons attribute of a Buttons instance.
         # show menu
         if actions:
             self._show_menu(actions, menu_args)
-        pass
 
     def _show_item_menu (self, paths, menu_args):
         """Show the context menu when files are selected."""
@@ -816,13 +815,15 @@ If you call show_all, call update immediately afterwards.
     CONSTRUCTOR
 
 AddressBar(manager, sep = '/', prepend_sep = True, append_sep = False,
-           padding = 6)
+           padding = 6, root_icon = Gtk.STOCK_HARDDISK)
 
 manager: a Manager instance.
 sep: the path separator used in output.  This can be any string.
 prepend_sep: whether to prepend paths in output with the path separator.
 append_sep: whether to append to paths in output the path separator.
 padding: the padding between widgets in this gtk.Box.
+root_icon: GTK stock for the icon shown on the root button in the breadcrumbs
+           view.
 
     METHODS
 
@@ -843,7 +844,8 @@ path: the current path shown (in list form).
 
 """
     def __init__ (self, manager, sep = '/', prepend_sep = True,
-                  append_sep = False, padding = 6):
+                  append_sep = False, padding = 6,
+                  root_icon = gtk.STOCK_HARDDISK):
         gtk.Box.__init__(self, False, padding)
         self.manager = manager
         self.sep = sep
@@ -875,17 +877,16 @@ path: the current path shown (in list form).
         # make scrollback button/root entry
         self._scrollback_b = sb = gtk.Button('\u25bc')
         sb.set_vexpand(True)
-        #sb.connect('clicked', )
+        sb.connect('clicked', self._scrollback_menu)
         sb.show()
-        self._root_b = root_b = gtk.ToggleButton(None, gtk.STOCK_HARDDISK)
+        self._root_b = root_b = gtk.ToggleButton(None, root_icon)
         root_b.set_vexpand(True)
         root_b.connect('toggled', self._breadcrumb_toggle, 0)
         root_b.show()
-        self._root_i = root_i = gtk.MenuItem(gtk.STOCK_HARDDISK)
-        #root_i.set_use_stock(True)
-        # TODO: root_i callback
-        # TODO: remove text from root_i
-        root_i.show()
+        self._root_i = root_i = gtk.ImageMenuItem(root_icon)
+        root_i.set_use_stock(True)
+        root_i.get_child().set_text('root')
+        root_i.connect('activate', self._breadcrumb_scrollback, 0)
         # remove button labels
         for b in (mode_b, root_b, ok_b):
             box = b.get_child().get_child()
@@ -1020,14 +1021,40 @@ This does not affect the manager.
         self.set_path(path)
         self._set_manager_path(path)
 
+    def _breadcrumb_scrollback (self, b, i):
+        """Callback for items in the breadcrumb scrollback menu."""
+        path = self._bc_path[:i]
+        self.set_path(path)
+        self._set_manager_path(path)
+
     def _resize_breadcrumbs (self, bc, size):
         """Update breadcrumbs for new size."""
         if self._max_bc_size != size.width:
             self._max_bc_size = size.width
-            # if we do the update now, stuff goes weird (the buttons don't get
-            # drawn), so wait until this event handler's returned first (I
-            # can't find a way to add a callback with higher priority).
+            # HACK: if we do the update now, stuff goes weird (the buttons
+            # don't get drawn), so wait until this event handler's returned
+            # first (I can't find a way to add a callback with higher
+            # priority)
             idle_add(self._update_breadcrumbs)
+
+    def _scrollback_menu (self, b):
+        """Show the breadcrumbs scrollback menu."""
+        # HACK: need to store the menu for some reason, else it doesn't show up
+        # - maybe GTK stores it in such a way that the garbage collector thinks
+        # it can get rid of it or something
+        menu = self._temp_menu = gtk.Menu()
+        # free up root item when we're done
+        menu.connect('selection-done', lambda *args: menu.remove(self._root_i))
+        cb = self._breadcrumb_scrollback
+        # want previous at the top, root at the bottom
+        n = self._bc_hidden - 1
+        for i, d in enumerate(reversed(self._bc_path[:n])):
+            item = gtk.ImageMenuItem(d)
+            item.connect('activate', cb, n - i)
+            menu.append(item)
+        menu.append(self._root_i)
+        menu.show_all()
+        menu.popup(None, None, None, None, 0, gtk.get_current_event_time())
 
     def set_mode (self, mode, fix_button = True):
         """Set the display mode: True for an entry, False for breadcrumbs."""
