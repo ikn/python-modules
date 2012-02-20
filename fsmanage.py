@@ -22,10 +22,7 @@ buttons
 """
 
 # TODO:
-# - hide bits of the addressbar breadcrumbs if it gets bigger than its parent
-#   - hide start until the current one, and show a '<' button that drops down a
-#     menu with hidden bits
-#   - then, if necessary, hide end until the current one
+# - address bar scrollback button action
 # - multi-DND
 # - allow resizing of breadcrumbs (gtk.Grid) smaller than its current size
 
@@ -33,6 +30,7 @@ from pickle import dumps, loads
 from base64 import encodebytes, decodebytes
 
 from gi.repository import Gtk as gtk, Gdk as gdk
+from gi.repository.GLib import idle_add
 
 to_str = lambda o: encodebytes(dumps(o)).decode()
 from_str = lambda s: loads(decodebytes(s.encode()))
@@ -144,6 +142,7 @@ buttons: the buttons attribute of a Buttons instance.
         self._clipboard = None
         self._history = [self.path]
         self._hist_sel = {}
+        self._hist_focus = {}
         self._hist_pos = 0
         self.buttons = None
         self.address_bar = None
@@ -497,7 +496,7 @@ buttons: the buttons attribute of a Buttons instance.
                     self._uncut()
 
     def _delete (self, *files):
-        """Delete give files, else selected files, if any."""
+        """Delete given files, else selected files, if any."""
         if not files:
             path = self.path
             files = [path + [name] for name in self.get_selected_files()]
@@ -520,12 +519,17 @@ buttons: the buttons attribute of a Buttons instance.
                         break
                     else:
                         prev = i
+                i = None
                 if after is not None:
-                    self.get_selection().select_path(after)
+                    i = after
                 elif prev is not None:
-                    self.get_selection().select_path(prev)
+                    i = prev
+                if i is None:
+                    changes = ()
+                else:
+                    changes = [(this, self._model[i][COL_NAME])]
                 # refresh
-                self._refresh(True)
+                self._refresh(True, *changes)
 
     def _rename_selected (self):
         """Rename the selected files."""
@@ -609,26 +613,34 @@ preserve_sel: whether to try to preserve the selection over the refresh
 
 """
         path = self.path
-        # get stored selection
+        # get stored selection and focus
         try:
             selected = self._hist_sel[tuple(path)]
+            focus = self._hist_focus[tuple(path)]
         except KeyError:
             sel_from_hist = False
             if preserve_sel:
-                # else get current selection with changes
+                # else get current selection and focus with changes
                 selected = set(self.get_selected_files())
+                focus = self.get_cursor()[0]
+                if focus is not None:
+                    focus = self._model[focus][COL_NAME]
                 for old, new in changes:
                     if old is not None:
+                        if old == focus:
+                            focus = new
                         try:
                             selected.remove(old)
                         except KeyError:
                             continue
-                    selected.add(new)
+                        else:
+                            selected.add(new)
             else:
                 selected = []
+                focus = None
         else:
             sel_from_hist = True
-            del self._hist_sel[tuple(path)]
+            del self._hist_sel[tuple(path)], self._hist_focus[tuple(path)]
         # clear model
         model = self._model
         model.clear()
@@ -669,16 +681,30 @@ preserve_sel: whether to try to preserve the selection over the refresh
         changes_new = [new for old, new in changes]
         for name in selected:
             try:
-                sel.select_path(names[name])
+                i = names[name]
             except KeyError:
                 pass
             else:
+                sel.select_path(i)
                 if name in changes_new or sel_from_hist:
-                    new_selected.append(names[name])
-        # if selected anything new, scroll to the first of these
-        if new_selected:
-            # FIXME: use_align = False doesn't seem to be working
-            self.scroll_to_cell(min(new_selected))
+                    new_selected.append(i)
+        # restore focus
+        try:
+            focus = names[focus]
+        except KeyError:
+            focus = None
+        else:
+            if not isinstance(focus, gtk.TreePath):
+                focus = gtk.TreePath(focus)
+            self.set_cursor(focus, None, False)
+        # if got a focus, scroll to it
+        if focus is not None:
+            self.scroll_to_cell(focus, use_align = False)
+        # else if selected anything new, scroll to the first of these
+        elif new_selected:
+            self.scroll_to_cell(min(new_selected), use_align = False)
+        elif items:
+            self.scroll_to_cell(0)
 
     def set_path (self, path, add_to_hist = True, tell_address_bar = True):
         """Set the current path.
@@ -699,6 +725,10 @@ tell_address_bar: whether to notify the AddressBar instance associated with
             self._hist_pos += 1
             self._history = self._history[:self._hist_pos] + [path]
         self._hist_sel[tuple(self.path)] = self.get_selected_files()
+        focus = self.get_cursor()[0]
+        if focus is not None:
+            focus = self._model[focus][COL_NAME]
+        self._hist_focus[tuple(self.path)] = focus
         self.path = path
         # file listing
         self._refresh(preserve_sel = False)
@@ -821,6 +851,7 @@ path: the current path shown (in list form).
         self.append_sep = append_sep
         manager.address_bar = self
         self._working = False
+        self.set_vexpand(False)
         # widgets
         self.mode_button = mode_b = gtk.ToggleButton(None, gtk.STOCK_EDIT)
         f = lambda b: self.set_mode(b.get_active(), False)
@@ -838,13 +869,16 @@ path: the current path shown (in list form).
         # breadcrumbs
         self._bc_path = []
         self._max_bc_size = None
-        self.breadcrumbs = gtk.Grid()
-        self.pack_start(self.breadcrumbs, True, True, 0)
-        self.breadcrumbs.connect('size-allocate', self._resize_breadcrumbs)
+        self.breadcrumbs = bc = gtk.Grid()
+        self.pack_start(bc, True, True, 0)
+        bc.connect('size-allocate', self._resize_breadcrumbs)
         # make scrollback button/root entry
-        self._scrollback_b = gtk.Button('\u25bc')
-        #self._scrollback_b.connect('clicked', )
+        self._scrollback_b = sb = gtk.Button('\u25bc')
+        sb.set_vexpand(True)
+        #sb.connect('clicked', )
+        sb.show()
         self._root_b = root_b = gtk.ToggleButton(None, gtk.STOCK_HARDDISK)
+        root_b.set_vexpand(True)
         root_b.connect('toggled', self._breadcrumb_toggle, 0)
         root_b.show()
         self._root_i = root_i = gtk.MenuItem(gtk.STOCK_HARDDISK)
@@ -958,8 +992,7 @@ This does not affect the manager.
             for i, d in enumerate(bc_path[depth:]):
                 if not add_button(depth + i + 1, d):
                     break
-        # FIXME: stuff disappears at times
-        # FIXME: no root displayed initially
+        return False
 
     def _set_manager_path (self, path):
         """Set the manager path to the one given (in list form)."""
@@ -991,7 +1024,10 @@ This does not affect the manager.
         """Update breadcrumbs for new size."""
         if self._max_bc_size != size.width:
             self._max_bc_size = size.width
-            self._update_breadcrumbs()
+            # if we do the update now, stuff goes weird (the buttons don't get
+            # drawn), so wait until this event handler's returned first (I
+            # can't find a way to add a callback with higher priority).
+            idle_add(self._update_breadcrumbs)
 
     def set_mode (self, mode, fix_button = True):
         """Set the display mode: True for an entry, False for breadcrumbs."""
