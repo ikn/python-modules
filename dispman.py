@@ -5,7 +5,7 @@ a rect to draw in.  It doesn't do much: for something more interesting like
 layers or automatic display placement, use a subclass.  Display is the basic
 display class, and has subclasses too.
 
-Python version: 2.
+Python version: 3-dev.
 Release: 2.
 
 Licensed under the GNU General Public License, version 3; if this was not
@@ -34,7 +34,70 @@ import pygame
 
 from miscutil import split
 
-POLICY_SCROLL = {}
+_num = (int, long, float)
+
+def _const_vel (d, *vels):
+    if not hasattr(d, 'vel'):
+        if isinstance(vels[0], _num):
+            # just got one vel
+            vels = [vels]
+        else:
+            vels = [list(v) for v in vels]
+        vel = vels[0]
+        vels = vels[1:]
+        if not isinstance(vel[0], _num):
+            # remove time from first vel
+            vel = vel[0]
+        d.t = 0
+        d.real_pos = list(d.pos)
+        d.vel = vel
+        d.vels = vels
+    vx, vy = d.vel
+    x, y = d.real_pos
+    x += vx
+    y += vy
+    d.real_pos = [x, y]
+    d.pos = [int(x), int(y)]
+    # get next vel if necessary
+    vels = d.vels
+    if vels:
+        d.t += 1
+        if d.t >= vels[0][1]:
+            d.vel = vels.pop(0)[0]
+
+def _damped (d, obj, inner, outer = None, speed = 0.5):
+    if not hasattr(d, 'inner'):
+        d_r = d.rect
+        if outer is None:
+            outer = d_r
+        for attr, r in (('inner', inner), ('outer', outer)):
+            if isinstance(r, _num):
+                r = (r * d_r[2], r * d_r[3])
+            if len(r) == 2:
+                offset = ((d_r[2] - r[0]) / 2, (d_r[3] - r[1]) / 2)
+                r = (d_r[0] + offset[0], d_r[1] + offset[1], r[0], r[1])
+            setattr(d, attr, pygame.Rect(r))
+        if not d.outer.contains(d.inner):
+            msg = 'damped scrolling: outer rect must contain inner rect'
+            raise ValueError(msg)
+    p = []
+    for i in (0, 1):
+        # get amount to move to be in inner
+        a = d.inner[i]
+        b = a + d.inner[i + 2]
+        o = obj.pos[i]
+        x = d.pos[i]
+        if o < a:
+            diff = a - o
+        elif o > b:
+            diff = b - o
+        else:
+            diff = 0
+        x += diff * speed
+        p.append(x)
+    d.pos = p
+
+POLICY_SCROLL = {'const_vel': _const_vel, 'damped': _damped}
 POLICY_CLEANUP = {}
 
 class Display:
@@ -47,13 +110,13 @@ Display(rect, draw_fn)
 rect: display area Pygame-style rect.
 draw_fn: function to call to draw to the surface.  This must be of the form
 
-draw_fn(display, surface, dirty) -> drew
+    draw_fn(display, surface, dirty) -> drew
 
-display: this Display instance.
-surface: the surface to draw to.
-dirty: a bool indicating whether this display's area might have been drawn
-        over since the last call.
-drew: whether any changes were made to the surface.
+    display: this Display instance.
+    surface: the surface to draw to.
+    dirty: a bool indicating whether this display's area might have been drawn
+           over since the last call.
+    drew: whether any changes were made to the surface.
 
     METHODS
 
@@ -112,13 +175,40 @@ policy_cleanup: if policy is a function, this can be a function that takes this
 args: arguments passed to the scroll function (determined by policy) every
       call.
 
+    POLICIES
+
+const_vel (*vels):
+    scroll at a constant velocity.
+
+vels: one or more (velocity, start_time) tuples, where velocity is an (x, y)
+      velocity to scroll at and start_time is the number of ticks (calls to
+      draw) until this velocity is in effect.  These must be ordered by
+      start_time.  The first argument may just be velocity (if start_time is
+      also given, it is ignored).
+
+damped (obj, inner[, outer], speed = 0.5):
+    keep something in a rect with smooth motion.
+
+obj: something with a pos attribute, which is its (x, y) position relative to
+     the display.
+inner: a rect relative to the display to keep the object in - if outside,
+       scrolling will take place to move it inside.  This can also be
+       (width, height) for a rect centred in the display, or a number giving
+       the rect's size as a ratio of the display size for a centred rect.
+outer: a rect relative to the display to keep the object in - it will never be
+       outside this rect.  Can be (width, height) or a number like inner.  If
+       not given, the display's rect is used.
+speed: the speed with which the object is scrolled into inner.  Between 0 and
+       1.
+
     METHODS
 
 set_policy
 
     ATTRIBUTES
 
-pos, policy: from constructor.
+pos: the current [x, y] position in the scrollable virtual area.
+policy: from constructor.
 
 """
 
@@ -282,7 +372,11 @@ changed: a list of displays whose sizes or positions have changed.
         return changed
 
     def draw (self):
-        """Tell every display to draw."""
+        """Tell every display to draw
+
+Returns whether any changes were made to any screens.
+
+"""
         screen = self.screen
         dirty = False
         for display in self.displays:
