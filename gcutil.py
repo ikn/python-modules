@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 2.
+Release: 3.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -189,7 +189,7 @@ disk_changed
 changed
 get_info
 get_extra_files
-extract_extra_files [NOT IMPLEMENTED]
+extract_extra_files
 extract
 write
 compress [NOT IMPLEMENTED]
@@ -387,7 +387,8 @@ _extract(f, start, size, dest, block_size = 0x100000, overwrite = False)
 f: the disk image opened in binary mode.
 start: position to start reading from.
 size: amount of data to read.
-dest: file to extract to.
+dest: file to extract to; may also be a file object to write to (open in binary
+      mode).
 block_size: the maximum amount of data, in bytes, to read and write at a time
             (0x100000 is 1MiB).
 overwrite: whether to overwrite the file if it exists (if False and the file
@@ -398,15 +399,20 @@ success: whether the file could be created.
 """
         if not overwrite and os.path.exists(dest):
             return False
+        f.seek(start)
         try:
-            with open(dest, 'wb') as f_dest:
-                f.seek(start)
-                # copy data
-                while size > 0:
-                    amount = min(size, block_size)
-                    data = f.read(amount)
-                    size -= amount
-                    f_dest.write(data)
+            if isinstance(dest, (str, bytes)):
+                f_dest = open(dest, 'wb')
+            else:
+                f_dest = dest
+            # copy data
+            while size > 0:
+                amount = min(size, block_size)
+                data = f.read(amount)
+                size -= amount
+                f_dest.write(data)
+            if isinstance(dest, (str, bytes)):
+                f_dest.close()
         except IOError:
             return False
         else:
@@ -419,24 +425,50 @@ success: whether the file could be created.
 extract_extra_files(*files, block_size = 0x100000, overwrite = False)
     -> success
 
-files: the files to extract, echa a (name, target) tuple, where:
+files: the files to extract, each a (name, target) tuple, where:
     name: the file's name as returned by get_extra_files.
     target: the path on the real filesystem to extract this file to.  This may
-            also be a file object to write to (open in binary mode).
+            also be a file object to write to (open in binary mode); in this
+            case, no seeking will occur.
 block_size: the maximum amount of data, in bytes, to read and write at a time
             (0x100000 is 1MiB).  This is a keyword-only argument.
 overwrite: whether to overwrite files if they exist (if False and a file
-           exists, its returned success will be False).
+           exists, its returned success will be False).  This is a keyword-only
+           argument.
 
 success: a list of bools corresponding to the given files, each indicating
-         whether the file could be created.  Failure can occur if the file
-         already exists or if the target path is invalid.
+         whether the file could be created.  Failure can occur if the name is
+         unknown, the destination file already exists, or the target path is
+         invalid.
 
 Any missing intermediate directories will be created.
 
 """
-        # TODO
-        return NotImplemented
+        success = []
+        all_files = {f[0]: f[1:] for f in self.get_extra_files()}
+        with open(self.fn, 'rb') as f:
+            for name, dest in files:
+                try:
+                    start, size = all_files[name]
+                except KeyError:
+                    # unknown file
+                    success.append(False)
+                    continue
+                # create dir if necessary
+                if isinstance(dest, (str, bytes)):
+                    d = dirname(dest)
+                    try:
+                        mkdir(d)
+                    except OSError as e:
+                        if e.errno != 17:
+                            # unknown error
+                            success.append(False)
+                            continue
+                        # else already exists and we want to ignore this
+                # extract file
+                success.append(self._extract(f, start, size, dest, block_size,
+                                        overwrite))
+        return success
 
     def extract (self, *files, block_size = 0x100000, overwrite = False):
         """Extract files from the filesystem.
@@ -453,7 +485,7 @@ block_size: the maximum amount of data, in bytes, to read and write at a time
             (0x100000 is 1MiB).  This is a keyword-only argument.
 overwrite: whether to overwrite files if they exist and ignore existing
            directories (if False and a file/directory exists, it will be in the
-           failed list).
+           failed list).  This is a keyword-only argument.
 
 failed: a list of files and directories that could not be created.  This is in
         the same format as the given files, but may include ones not given (if
