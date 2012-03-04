@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 4-dev.
+Release: 4.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -192,7 +192,7 @@ get_extra_files
 extract_extra_files
 extract
 write
-compress [NOT IMPLEMENTED]
+compress
 
     ATTRIBUTES
 
@@ -903,8 +903,26 @@ See compress for more details.
         # TODO
         pass
 
-    def compress (self, quick = True, block_size = 0x100000, tmp_dir = None):
+    def compress (self, block_size = 0x100000):
         """Compress the image.
+
+compress(block_size = 0x100000[, tmp_dir])
+block_size: the maximum amount of data, in bytes, to read and write at a time
+            (0x100000 is 1MiB).
+
+This function removes all free space in the image's filesystem to make it
+smaller.  GameCube images often have a load of free space between the
+filesystem string table and the file data, sometimes hundreds of MiB.  This
+will also remove free space between files that may have been opened up by
+deletions or other editing.
+
+IMPORTANT: any changes that have been made to the tree are discarded before
+compressing.  Make sure you write everything you want to keep first.
+
+"""
+"""
+
+Replacement docstring for if I ever do full compress:
 
 compress(quick = True, block_size = 0x100000[, tmp_dir])
 
@@ -937,10 +955,12 @@ compressing.  Make sure you write everything you want to keep first.
 """
         # discard changes
         self.tree = self.build_tree()
-        if quick:
-            if self._quick_compress(block_size):
-                self.write(block_size)
-        else:
-            tmp_dir = tempfile.mkdtemp(prefix = 'gcutil', dir = tmp_dir)
-            self._slow_compress(tmp_dir, block_size)
-            rmtree(tmp_dir)
+        if self._quick_compress(block_size):
+            self.write(block_size)
+        #if quick:
+            #if self._quick_compress(block_size):
+                #self.write(block_size)
+        #else:
+            #tmp_dir = tempfile.mkdtemp(prefix = 'gcutil', dir = tmp_dir)
+            #self._slow_compress(tmp_dir, block_size)
+            #rmtree(tmp_dir)
