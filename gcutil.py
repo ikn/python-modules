@@ -20,6 +20,10 @@ tree_from_dir
 
 """
 
+# TODO:
+# - decompress function
+# - write takes optional function to call periodically with progress ratio (still 0 after first bit)
+
 import os
 from os import sep
 from shutil import rmtree
@@ -307,7 +311,7 @@ tree: the built tree.
         return tree
 
     def update (self):
-        """Re-read data from the disk."""
+        """Re-read data from the disk.  Discards all changes to the tree."""
         self._init()
         # build tree
         self.tree = self.build_tree()
@@ -901,6 +905,10 @@ See compress for more details.
 
 """
         # TODO
+        # - place files at start of data in entries order
+        # - copy any that are already in new region to temp dir
+        # - replace tree entries to reflect changes
+        # - write()
         pass
 
     def compress (self, block_size = 0x100000):
