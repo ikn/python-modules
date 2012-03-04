@@ -920,7 +920,7 @@ IMPORTANT: any changes that have been made to the tree are discarded before
 compressing.  Make sure you write everything you want to keep first.
 
 """
-"""
+        """
 
 Replacement docstring for if I ever do full compress:
 
