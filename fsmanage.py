@@ -858,7 +858,7 @@ path: the current path shown (in list form).
         self.set_vexpand(False)
         # widgets
         self.mode_button = mode_b = gtk.ToggleButton(None, gtk.STOCK_EDIT)
-        f = lambda b: self.set_mode(b.get_active(), False)
+        f = lambda b: self.set_mode(b.get_active(), False, True)
         mode_b.connect('toggled', f)
         self.pack_start(mode_b, False, False, 0)
         # entry
@@ -937,13 +937,15 @@ This does not affect the manager.
         self.set_path(path)
         self._set_manager_path(path)
 
-    def set_mode (self, mode, fix_button = True):
+    def set_mode (self, mode, fix_button = True, focus_address_bar = False):
         """Set the display mode: True for an entry, False for breadcrumbs."""
         if fix_button:
             self.mode_button.set_active(mode)
         if mode:
             self.breadcrumbs.hide()
             self.address.show()
+            if focus_address_bar:
+                self.entry.grab_focus()
         else:
             self.address.hide()
             self.breadcrumbs.show()
