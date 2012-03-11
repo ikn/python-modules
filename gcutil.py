@@ -27,11 +27,10 @@ tree_from_dir
 import os
 from shutil import rmtree, copyfile, Error as shutil_error
 import tempfile
-import codecs
 
 CODEC = 'shift-jis'
-_decode = lambda b: codecs.decode(b, CODEC)
-_encode = lambda s: codecs.encode(s, CODEC)
+_decode = lambda b: b.decode(CODEC)
+_encode = lambda s: s.encode(CODEC)
 _sep = lambda s: _encode(os.sep) if isinstance(s, bytes) else os.sep
 
 from os import mkdir
@@ -849,8 +848,8 @@ It's probably a good idea to back up first...
                 write(name + b'\0', f, pos)
                 pos += len(name) + 1
             # truncate image to new size if necessary
-            end = max(data_start,
-                      *(st + sz for d, ss, st, sz in entries if not d))
+            ends = [st + sz for d, ss, st, sz in entries if not d]
+            end = max([data_start] + ends)
             if end < f.seek(0, 2):
                 f.truncate(end)
         # build new tree
