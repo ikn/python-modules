@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 5-dev.
+Release: 5.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -236,7 +236,9 @@ tree: a dict representing the root directory.  Each directory is a dict whose
     {id1: {id2: {...}, ...}, ..., None: [id3, ...]}
 
       In each case, an identifier is (name, index), where:
-    name: the directory/file's (current) name.
+    name: the directory/file's (current) name.  Any names added to the tree
+          must be shift-JIS-encoded bytes instances, or str instances that can
+          be encoded with shift-JIS.
     index: the index in the entries list if the file/directory is already in
            the image's filesystem, else (for items yet to be added) None for a
            directory, or the real filesystem path for a file.
