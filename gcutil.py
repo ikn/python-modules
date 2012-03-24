@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 6-dev.
+Release: 6.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -53,6 +53,8 @@ Takes the name to check, which can be str or bytes, and returns whether it is
 valid.  A valid name can be safely added to the tree of a GCFS instance.
 
 """
+    if (b'\0', '\0')[isinstance(name, str)] in name:
+        return False
     try:
         (_encode if isinstance(name, str) else _decode)(name)
     except (UnicodeEncodeError, UnicodeDecodeError):
