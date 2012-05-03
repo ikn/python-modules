@@ -27,18 +27,16 @@ CODEC = 'shift_jis': the string encoding to use for filenames in the disk
                      got a disk that uses something else.)
 BLOCK_SIZE = 0x100000: the maximum amount of data, in bytes, to read and write
                        at a time (0x100000 is 1MiB).
+PAUSED_WAIT = .1: in functions that take a progress function, if the action is
+                  paused, the function waits this many seconds between
+                  subsequent calls to the progress function.
 
 [NOT IMPLEMENTED]
 
-THREADED = None: whether to use threads to read and write data simultaneously.
-                 Possible values are:
-    True: always have one thread reading and one writing.
-    False: just use one thread.
-    None: have as many threads as possible where each is reading from or
-          writing to a different physical disk.
-PAUSED_WAIT = .5: in functions that take a progress function, if the action is
-                  paused, the function waits this many seconds between
-                  subsequent calls to the progress function.
+THREADED = True: whether to use threads to read and write data simultaneously.
+                 If True, have as many threads as possible where each is
+                 reading from or writing to a different physical disk; if
+                 False, always have just one thread.
 
 """
 
@@ -47,16 +45,22 @@ PAUSED_WAIT = .5: in functions that take a progress function, if the action is
 # - BNR support
 # - pause/cancel in copy (return value on cancel?)
 # - remaining time estimation
+# - threaded copy
 # - when write and add files (and maybe other places), sort files by position
 #   on disk before adding (should be quicker, and else is sorted by filesize so
 #   appears to slow down towards end when doing loads of small files)
-# - threaded
 
 import os
 from os.path import getsize, exists, dirname, basename
+from time import sleep
 from copy import deepcopy
 from shutil import rmtree
 import tempfile
+
+try:
+    from gettext import gettext as _
+except ImportError:
+    _ = lambda s: s
 
 CODEC = 'shift-jis'
 BLOCK_SIZE = 0x100000
@@ -202,11 +206,11 @@ progress: a function to periodically pass the current progress to.  It takes 3
           passed function may never be called - if, for example, all you are
           doing is creating directories or deleting files.
 
-          [NOT IMPLEMENTED]
           You can pause the copy by returning 1.  This function will then call
-          progress periodically until the return value is no longer 1.  The
-          progress function is only called between every block/file copied -
-          this gives an idea of how quickly a running copy can be paused.
+          progress periodically until the return value is no longer 1 (for
+          these calls, the arguments are undefined).  The progress function is
+          only called between every block/file copied - this gives an idea of
+          how quickly a running copy can be paused.
 
           [NOT IMPLEMENTED]
           You can try to cancel the copy by returning 2.  If it can still be
@@ -224,7 +228,7 @@ failed: a list of indices in the given files list for copies that failed.
 
 """
     string = (bytes, str)
-    if progress is None and isinstance(names, int):
+    if progress is not None and isinstance(names, int):
         # fill out names
         names = [basename(f[names][0]) for f in files]
     # make every src/dest a list
@@ -259,7 +263,6 @@ failed: a list of indices in the given files list for copies that failed.
                     if not p.strip(sep):
                         # ...no parent exists, somehow
                         # it'll just fail later, so location doesn't matter
-                        print(f)
                         locations[f] = -1
                         break
                 else:
@@ -314,8 +317,17 @@ failed: a list of indices in the given files list for copies that failed.
                 done = 0
                 while size:
                     if progress is not None and total_done >= progress_update:
-                        progress(total_done, total_size, names[i])
+                        # update progress
+                        result = progress(total_done, total_size, names[i])
+                        while result == 1:
+                            # paused
+                            sleep(PAUSED_WAIT)
+                            result = progress(None, None, None)
+                        if result == 2:
+                            # cancel
+                            pass
                         progress_update += BLOCK_SIZE
+                    # read and write the next block
                     amount = min(size, BLOCK_SIZE)
                     if same:
                         src_f.seek(src_start + done)
@@ -889,7 +901,7 @@ It's probably a good idea to back up first...
                     fn = old_i
                     start = fn
                     if not os.path.isfile(fn):
-                        err = '\'{}\' is not a valid file'
+                        err = _('\'{}\' is not a valid file')
                         e = ValueError(err.format(fn))
                         e.handled = True
                         raise e
@@ -965,7 +977,7 @@ It's probably a good idea to back up first...
                     old_files.append((start, i, old_i, size))
                 failed = copy(to_copy, progress, names)
                 if failed:
-                    msg = 'couldn\'t read from and write to the disk image'
+                    msg = _('couldn\'t read from and write to the disk image')
                     error(msg, f)
         # sort existing files by position
         old_files.sort()
@@ -998,7 +1010,7 @@ It's probably a good idea to back up first...
             # extract
             failed = self.extract(to_extract, True)
             if failed:
-                msg = 'couldn\'t extract to a temporary file ({})'
+                msg = _('couldn\'t extract to a temporary file ({})')
                 error(msg.format(failed[0][1]))
 
         # copy new files to the image
@@ -1068,8 +1080,8 @@ It's probably a good idea to back up first...
                     entries[i] = (False, str_start, start, size)
                 failed = copy(to_copy, progress, to_copy_names)
                 if failed:
-                    msg = 'either couldn\'t read from \'{}\' or couldn\'t ' \
-                          'write to the disk image'
+                    msg = _('either couldn\'t read from \'{}\' or couldn\'t ' \
+                            'write to the disk image')
                     error(msg.format(to_copy[failed[0]][0][0]), f)
 
         # clean up temp dir
