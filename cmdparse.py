@@ -26,8 +26,8 @@ from textwrap import fill as tw_fill
 from math import ceil
 
 try:
-    from gettext import gettext as _
-except ImportError:
+    _
+except NameError:
     _ = lambda s: s
 
 from miscutil import startwith
