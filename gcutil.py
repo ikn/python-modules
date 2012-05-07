@@ -991,11 +991,13 @@ be imported in the same call to this function.
                                                 delete = False)
                 fn = f.name
                 f.close()
-                to_extract.append((old_i, fn))
+                to_extract.append((start, (old_i, fn)))
                 # change entry
                 entries[i] = (False, entries[i][1], fn, size)
+            # sort by position
+            to_extract.sort()
             # extract
-            failed = self.extract(to_extract, True)
+            failed = self.extract([f[1] for f in to_extract], True)
             if failed is True:
                 # cancelled
                 cleanup()
@@ -1029,7 +1031,9 @@ be imported in the same call to this function.
             new_files.sort(reverse = True)
             free.sort(reverse = True)
             # take the largest file
-            for file_i, (size, i) in enumerate(new_files):
+            nf_clean = []
+            nf_dirty = []
+            for size, i in new_files:
                 # and put it in the smallest possible gap
                 gap_i = -1
                 for gap_i, (gap, gap_start) in enumerate(free):
@@ -1052,28 +1056,42 @@ be imported in the same call to this function.
                         free.sort(reverse = True)
                     else:
                         free.pop(gap_i)
-                new_files[file_i] = (start, i)
+                # determine if this will overwrite an existing file
+                clean = True
+                for d, ss, f_start, f_size in old_entries:
+                    if not d and f_start < start + size and \
+                       f_start + f_size > start:
+                        clean = False
+                        break
+                (nf_clean if clean else nf_dirty).append((start, i))
             # actually copy
             with open(self.fn, 'r+b') as f:
                 # if we will be seeking beyond the image end, expand the file
                 end = f.seek(0, 2)
-                last_start = max(start for start, i in new_files)
+                last_start = max(start for start, i in nf_clean + nf_dirty)
                 if end < last_start:
                     f.truncate(last_start)
                 # perform the copy
-                to_copy = []
-                to_copy_names = []
                 fn = self.fn
-                for start, i in new_files:
-                    is_dir, str_start, this_fn, size = entries[i]
-                    to_copy.append(((this_fn, None, 0, size), (fn, f, start)))
-                    to_copy_names.append(names[i])
-                    entries[i] = (False, str_start, start, size)
-                failed = copy(to_copy, progress, to_copy_names)
-                if failed:
-                    msg = _('either couldn\'t read from \'{}\' or couldn\'t ' \
-                            'write to the disk image')
-                    error(msg.format(to_copy[failed[0]][0][0]), f)
+                for clean in (True, False):
+                    to_copy = []
+                    to_copy_names = []
+                    for start, i in (nf_clean if clean else nf_dirty):
+                        is_dir, str_start, this_fn, size = entries[i]
+                        to_copy.append(((this_fn, None, 0, size),
+                                        (fn, f, start)))
+                        to_copy_names.append(names[i])
+                        entries[i] = (False, str_start, start, size)
+                    failed = copy(to_copy, progress, to_copy_names,
+                                  can_cancel = clean)
+                    if failed is True:
+                        # cancelled
+                        cleanup()
+                        return True
+                    elif failed:
+                        msg = _('either couldn\'t read from \'{}\' or couldn\'t ' \
+                                'write to the disk image')
+                        error(msg.format(to_copy[failed[0]][0][0]), f)
 
         cleanup_tmp_dir()
         # get new fst_size, num_entries, str_start
