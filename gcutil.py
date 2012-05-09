@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 9.
+Release: 10-dev.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -484,17 +484,30 @@ tree: a dict representing the root directory.  Each directory is a dict whose
                 name = read(f, str_start + entry[1], 0x200, False, b'\0', 0x20)
                 names.append(_decode(name))
 
-    def _tree_size (self, tree, file_size = False):
+    def _tree_size (self, tree, file_size = False, recursive = False,
+                    sizes = None, current_dir = None):
         """Get the number of children in a tree.
 
-_tree_size(tree, file_size = False)
+_tree_size(tree, file_size = False, recursive = False) -> size
 
 tree: the tree.
 file_size: whether to return the total file size of the children in the tree
            instead.  Imported files are respected (if they cannot be accessed,
            they are ignored).
+recursive: whether to return a dict of numbers for every child in the tree
+           instead.  The keys of this dict are (is_dir, path...) tuples, where
+           path is one or more directory names within the given tree.  The
+           whole tree, then, is just (True,).  If file_size is False, files
+           are omitted (always have number of children 0).
+
+size: the number of children in the tree or the total file size.
 
 """
+        if recursive:
+            if sizes is None:
+                sizes = {}
+            if current_dir is None:
+                current_dir = ()
         size = 0
         for k, v in tree.items():
             if k is None:
@@ -503,20 +516,31 @@ file_size: whether to return the total file size of the children in the tree
                     entries = self.entries
                     for name, i in v:
                         if isinstance(i, int):
-                            size += entries[i][3]
+                            this_size = entries[i][3]
                         else:
                             try:
-                                size += getsize(i)
+                                this_size = getsize(i)
                             except OSError:
-                                pass
+                                this_size = 0
+                        size += this_size
+                        if recursive:
+                            sizes[(False,) + current_dir + (name,)] = this_size
                 else:
                     size += len(v)
             else:
                 # dir
                 if not file_size:
                     size += 1
-                size += self._tree_size(v, file_size)
-        return size
+                d = current_dir + (k[0],) if recursive else None
+                this_size = self._tree_size(v, file_size, recursive, sizes, d)
+                if recursive:
+                    this_size = sizes[(True,) + d]
+                size += this_size
+        if recursive:
+            sizes[(True,) + current_dir] = size
+            return sizes
+        else:
+            return size
 
     def build_tree (self, store = True, start = 0, end = None):
         """Build the directory tree from the current entries list.
