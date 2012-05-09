@@ -4,7 +4,7 @@ A note on end-user usage: drag-and-drop moves with left-click, and copies with
 middle-click or ctrl-left-click.
 
 Python version: 3.
-Release: 5.
+Release: 6-dev.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -616,14 +616,17 @@ address_bar: the AddressBar instance attached to this instance, or None.
             # failed
             return
         self._refresh(True)
-        # find it in the tree
+        # make sure the row exists
+        while gtk.events_pending():
+            gtk.main_iteration()
+        # find it in the tree and start editing it
         j = None
         for i, row in enumerate(self._model):
             if name == row[2]:
                 j = i
                 break
         if j is not None:
-            self._rename([i])
+            self._rename([j])
 
     def refresh (self, *new):
         """Refresh the directory listing.
@@ -734,6 +737,7 @@ preserve_sel: whether to try to preserve the selection over the refresh
                 sel.select_path(i)
                 if name in changes_new or sel_from_hist:
                     new_selected.append(i)
+        # FIXME: use_align doesn't seem to work
         # if got a focus, scroll to it
         if focus is not None:
             self.scroll_to_cell(focus, use_align = False)
