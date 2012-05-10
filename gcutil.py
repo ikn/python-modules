@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 10-dev.
+Release: 11.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -17,6 +17,7 @@ read
 write
 copy
 tree_from_dir
+search_tree
 
     SETTINGS
 
@@ -31,26 +32,19 @@ PAUSED_WAIT = .1: in functions that take a progress function, if the action is
                   paused, the function waits this many seconds between
                   subsequent calls to the progress function.
 
-[NOT IMPLEMENTED]
-
-THREADED = True: whether to use threads to read and write data simultaneously.
-                 If True, have as many threads as possible where each is
-                 reading from or writing to a different physical disk; if
-                 False, always have just one thread.
-
 """
 
 # TODO:
 # - decompress function
 # - BNR support
 # - remaining time estimation
-# - threaded copy
 # - handle not being able to access self.fn
 
 import os
 from os.path import getsize, exists, dirname, basename
 from time import sleep
 from copy import deepcopy
+import re
 from shutil import rmtree
 import tempfile
 
@@ -61,7 +55,6 @@ except NameError:
 
 CODEC = 'shift-jis'
 BLOCK_SIZE = 0x100000
-THREADED = None
 PAUSED_WAIT = .1
 
 _decode = lambda b: b.decode(CODEC)
@@ -250,40 +243,22 @@ failed: a list of indices in the given files list for copies that failed.  Or,
     locations = {}
     sep = os.sep
 
-    def stat (f):
-        # return (size, location) for file f (and cache the results)
+    def get_size (f):
+        # return the size of the given file (and cache the results)
         size = sizes.get(f, None)
         if size is None:
             try:
                 stat = os.stat(f)
             except OSError:
                 size = 0
-                # use first existing parent for location instead
-                p = os.path.abspath(f)
-                while True:
-                    try:
-                        p = dirname(p)
-                        stat = os.stat(p)
-                    except OSError:
-                        if not p.strip(sep):
-                            # ...no parent exists, somehow
-                            # it'll just fail later, so location doesn't matter
-                            location = -1
-                            break
-                    else:
-                        location = stat.st_dev
-                        break
             else:
                 size = stat.st_size
-                location = stat.st_dev
             # store in cache
             sizes[f] = size
-            locations[f] = location
         else:
             # retrieve from cache
             size = sizes[f]
-            location = locations[f]
-        return (size, location)
+        return size
 
     # fill in default values
     total_size = 0
@@ -293,7 +268,7 @@ failed: a list of indices in the given files list for copies that failed.  Or,
         if len(src) == 2:
             src.append(0)
         if len(src) == 3:
-            size = stat(src[0])
+            size = get_size(src[0])
             src.append(size - src[2])
         total_size += src[3]
         if len(dest) == 1:
@@ -301,67 +276,63 @@ failed: a list of indices in the given files list for copies that failed.  Or,
         if len(dest) == 2:
             dest.append(0)
     # actual copy
-    THREADED = False
     failed = []
-    if THREADED:
-        pass
-    else:
-        total_done = 0
-        progress_update = BLOCK_SIZE
-        for i, (src, dest) in enumerate(to_copy):
-            src_fn, src_f, src_start, size = src
-            src_open = src_f is None
-            dest_fn, dest_f, dest_start = dest
-            dest_open = dest_f is None
-            try:
-                # open files
-                if src_open:
-                    src_f = open(src_fn, 'rb')
-                if dest_open:
-                    if not overwrite and exists(dest_fn):
-                        # exists and don't want to overwrite
-                        failed.append(i)
-                        continue
-                    dest_f = open(dest_fn, 'wb')
-                # seek
-                same = src_f is dest_f
-                if not same:
-                    src_f.seek(src_start)
-                    dest_f.seek(dest_start)
-                # copy
-                done = 0
-                while size:
-                    if progress is not None and total_done >= progress_update:
-                        # update progress
-                        result = progress(total_done, total_size, names[i])
-                        while result == 1:
-                            # paused
-                            sleep(PAUSED_WAIT)
-                            result = progress(None, None, None)
-                        if result == 2 and can_cancel:
-                            # cancel
-                            return True
-                        progress_update += BLOCK_SIZE
-                    # read and write the next block
-                    amount = min(size, BLOCK_SIZE)
-                    if same:
-                        src_f.seek(src_start + done)
-                    data = src_f.read(amount)
-                    if same:
-                        dest_f.seek(dest_start + done)
-                    dest_f.write(data)
-                    size -= amount
-                    done += amount
-                    total_done += amount
-            except IOError:
-                failed.append(i)
-                continue
-            finally:
-                # clean up
-                if src_open and src_f is not None:
-                    src_f.close()
-                if dest_open and dest_f is not None:
-                    dest_f.close()
+    total_done = 0
+    progress_update = BLOCK_SIZE
+    for i, (src, dest) in enumerate(to_copy):
+        src_fn, src_f, src_start, size = src
+        src_open = src_f is None
+        dest_fn, dest_f, dest_start = dest
+        dest_open = dest_f is None
+        try:
+            # open files
+            if src_open:
+                src_f = open(src_fn, 'rb')
+            if dest_open:
+                if not overwrite and exists(dest_fn):
+                    # exists and don't want to overwrite
+                    failed.append(i)
+                    continue
+                dest_f = open(dest_fn, 'wb')
+            # seek
+            same = src_f is dest_f
+            if not same:
+                src_f.seek(src_start)
+                dest_f.seek(dest_start)
+            # copy
+            done = 0
+            while size:
+                if progress is not None and total_done >= progress_update:
+                    # update progress
+                    result = progress(total_done, total_size, names[i])
+                    while result == 1:
+                        # paused
+                        sleep(PAUSED_WAIT)
+                        result = progress(None, None, None)
+                    if result == 2 and can_cancel:
+                        # cancel
+                        return True
+                    progress_update += BLOCK_SIZE
+                # read and write the next block
+                amount = min(size, BLOCK_SIZE)
+                if same:
+                    src_f.seek(src_start + done)
+                data = src_f.read(amount)
+                if same:
+                    dest_f.seek(dest_start + done)
+                dest_f.write(data)
+                size -= amount
+                done += amount
+                total_done += amount
+        except IOError:
+            failed.append(i)
+            continue
+        finally:
+            # clean up
+            if src_open and src_f is not None:
+                src_f.close()
+            if dest_open and dest_f is not None:
+                dest_f.close()
     return failed
 
 def tree_from_dir (root, walk_iter = None):
@@ -387,6 +358,76 @@ That is, you can place it directly in such a tree to import lots of files.
             tree[(d, None)] = tree_from_dir(d, walk_iter)
     return tree
 
+def _match (term, name, case_sensitive, whole_name, regex):
+    """Used by search_tree to check if a name matches.
+
+_match(term, name, case_sensitive, whole_name, regex) -> matches
+
+term, case_sensitive, whole_name, regex: as taken by search_tree.
+name: the file/directory name to match against.
+
+matches: whether name is a match for term.
+
+If case_sensitive is False, term should be lower-case.
+
+"""
+    if regex:
+        flags = 0 if case_sensitive else re.I
+        if whole_name:
+            match = re.match(term, name, flags)
+            return match is not None and match.end() == len(name)
+        else:
+            return re.search(term, name, flags) is not None
+    else:
+        if not case_sensitive:
+            name = name.lower()
+        if whole_name:
+            return term == name
+        else:
+            return name.find(term) != -1
+
+def search_tree (tree, term = '', case_sensitive = False, whole_name = False,
+                 regex = False, dirs = True, files = True, matches = None):
+    """Search within a tree.
+
+search_tree(tree, term = '', case_sensitive = False, whole_name = False,
+            regex = False, dirs = True, files = True) -> matches
+
+tree: the tree to search (same format as the tree attribute of GCFS objects).
+term: the string to search for.
+case_sensitive: whether the match should be case-sensitive.
+whole_name: whether to only return results where the term matches the whole of
+            the file/directory name.
+regex: whether to perform RegEx-based matching.
+dirs: whether to include directories in the results.
+files: whether to include files in the results.
+
+matches: a list of (name, index) keys for matching files and directories, as
+         found in the tree.
+
+"""
+    if matches is None:
+        matches = []
+    elif not case_sensitive:
+        term = term.lower()
+    for d_key, this_tree in tree.items():
+        if d_key is None:
+            # files
+            if files:
+                for f_key in this_tree:
+                    if _match(term, f_key[0], case_sensitive, whole_name,
+                              regex):
+                        matches.append(f_key)
+        else:
+            # dir
+            if dirs:
+                if _match(term, d_key[0], case_sensitive, whole_name, regex):
+                    matches.append(d_key)
+            # search this dir (its results get added to matches)
+            search_tree(this_tree, term, case_sensitive, whole_name, regex,
+                        dirs, files, matches)
+    return matches
+
 
 class GCFS:
     """Read from and make changes to a GameCube image's filesystem.
@@ -409,6 +450,7 @@ fn: file path to the image file.
     METHODS
 
 build_tree
+tree_size
 update
 disk_changed
 changed
@@ -484,64 +526,6 @@ tree: a dict representing the root directory.  Each directory is a dict whose
                 name = read(f, str_start + entry[1], 0x200, False, b'\0', 0x20)
                 names.append(_decode(name))
 
-    def _tree_size (self, tree, file_size = False, recursive = False,
-                    sizes = None, current_dir = None):
-        """Get the number of children in a tree.
-
-_tree_size(tree, file_size = False, recursive = False) -> size
-
-tree: the tree.
-file_size: whether to return the total file size of the children in the tree
-           instead.  Imported files are respected (if they cannot be accessed,
-           they are ignored).
-recursive: whether to return a dict of numbers for every child in the tree
-           instead.  The keys of this dict are (is_dir, path...) tuples, where
-           path is one or more directory names within the given tree.  The
-           whole tree, then, is just (True,).  If file_size is False, files
-           are omitted (always have number of children 0).
-
-size: the number of children in the tree or the total file size.
-
-"""
-        if recursive:
-            if sizes is None:
-                sizes = {}
-            if current_dir is None:
-                current_dir = ()
-        size = 0
-        for k, v in tree.items():
-            if k is None:
-                # files
-                if file_size:
-                    entries = self.entries
-                    for name, i in v:
-                        if isinstance(i, int):
-                            this_size = entries[i][3]
-                        else:
-                            try:
-                                this_size = getsize(i)
-                            except OSError:
-                                this_size = 0
-                        size += this_size
-                        if recursive:
-                            sizes[(False,) + current_dir + (name,)] = this_size
-                else:
-                    size += len(v)
-            else:
-                # dir
-                if not file_size:
-                    size += 1
-                d = current_dir + (k[0],) if recursive else None
-                this_size = self._tree_size(v, file_size, recursive, sizes, d)
-                if recursive:
-                    this_size = sizes[(True,) + d]
-                size += this_size
-        if recursive:
-            sizes[(True,) + current_dir] = size
-            return sizes
-        else:
-            return size
-
     def build_tree (self, store = True, start = 0, end = None):
         """Build the directory tree from the current entries list.
 
@@ -580,6 +564,81 @@ tree: the built tree.
         if store:
             self.tree = tree
         return tree
+
+    def tree_size (self, tree, file_size = False, recursive = False,
+                   key = None, sizes = None, done = None):
+        """Get the number of children in or total filesize of a tree.
+
+tree_size(tree, file_size = False, recursive = False, key = None) -> size
+
+tree: the tree.
+file_size: whether to return the total file size of the children in the tree
+        instead.  Imported files are respected (if they cannot be accessed,
+        they are ignored).
+recursive: whether to return a dict of numbers for every child in the tree
+        instead.  The keys of this dict are the the same as in the tree
+        ((name, index) for each directory and file).  The key for the whole
+        tree is the key argument. If file_size is False, files are omitted
+        (always have number of children 0).
+key: if recursive is True, this is the key for the whole tree in the returned
+    dict (and must, therefore, be hashable).
+
+size: the number of children in the tree or the total file size, or a dict of
+    such numbers if recursive is True.
+
+"""
+        if recursive and sizes is None:
+            sizes = {}
+        if done is None:
+            done = {}
+        # infinite recursion prevention: return if already counted
+        tree_id = id(tree)
+        if tree_id in done:
+            done[tree_id].append(key)
+            return sizes if recursive else 0
+        # done stores lists of keys for the same tree, as detected above
+        done[tree_id] = []
+        size = 0
+        for d_key, this_tree in tree.items():
+            if d_key is None:
+                # files
+                if file_size:
+                    entries = self.entries
+                    for f_key in this_tree:
+                        i = f_key[1]
+                        if isinstance(i, int):
+                            this_size = entries[i][3]
+                        else:
+                            try:
+                                this_size = getsize(i)
+                            except OSError:
+                                this_size = 0
+                        size += this_size
+                        if recursive:
+                            sizes[f_key] = this_size
+                else:
+                    size += len(v)
+            else:
+                # dir
+                if not file_size:
+                    size += 1
+                this_size = self.tree_size(this_tree, file_size, recursive,
+                                           d_key, sizes, done)
+                # if not in sizes now, recursion
+                size += sizes.get(d_key, 0) if recursive else this_size
+        if recursive:
+            sizes[key] = size
+            others = done[tree_id]
+            if others:
+                for k in others:
+                    sizes[k] = size
+            # this tree might be somewhere else as well, but we've checked all
+            # children now, so consider that (and possible infinite recursions)
+            # separately
+            del done[tree_id]
+            return sizes
+        else:
+            return size
 
     def update (self):
         """Re-read data from the disk.  Discards all changes to the tree."""
@@ -774,7 +833,7 @@ Directories are extracted recursively.
             # add to total amount of data to copy
             if not isinstance(j, dict):
                 j = {None: [('', j)]}
-            total += self._tree_size(j, True)
+            total += self.tree_size(j, True)
         to_copy = []
         to_copy_names = []
         failed_pool = []
@@ -936,7 +995,7 @@ be imported in the same call to this function.
                 tree[None] = [f + (True,) for f in tree[None]]
                 name = _decoded(child[0])
                 names.append(name)
-                next_index = len(entries) + 2 + self._tree_size(tree)
+                next_index = len(entries) + 2 + self.tree_size(tree)
                 entries.append((True, str_start, parent, next_index))
                 parent_indices[id(tree)] = len(entries)
             # terminate with a null byte
