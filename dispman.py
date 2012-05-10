@@ -5,8 +5,8 @@ a rect to draw in.  It doesn't do much: for something more interesting like
 layers or automatic display placement, use a subclass.  Display is the basic
 display class, and has subclasses too.
 
-Python version: 3-dev.
-Release: 2.
+Python version: 2.
+Release: 3-dev.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
