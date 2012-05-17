@@ -38,7 +38,6 @@ PAUSED_WAIT = .1: in functions that take a progress function, if the action is
 # - decompress function
 # - BNR support
 # - handle not being able to access self.fn
-# - deepcopy does, eg. [a, a] -> [b, b], where b == a but b is b - in write, this causes everything in b to be removed before we go over it a second time
 
 import os
 from os.path import getsize, exists, dirname, basename
@@ -501,6 +500,9 @@ tree: a dict representing the root directory.  Each directory is a dict whose
     index: the index in the entries list if the file/directory is already in
            the image's filesystem, else (for items yet to be added) None for a
            directory, or the real filesystem path for a file.
+
+      Note: bad things happen if you have an object (dict or list) in more than
+      one place in the tree.
 """
 
     def __init__ (self, fn):
@@ -960,7 +962,7 @@ be imported in the same call to this function.
             # find next file or dir alphabetically
             children = tree[None]
             # += causes the original list to be modified
-            children = children + list(k for k in tree if k is not None)
+            children = children + [k for k in tree if k is not None]
             child = min(children, key = sort_key)
             if len(child) == 3:
                 # file
