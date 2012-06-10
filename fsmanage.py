@@ -4,7 +4,7 @@ A note on end-user usage: drag-and-drop moves with left-click, and copies with
 middle-click or ctrl-left-click.
 
 Python version: 3.
-Release: 7.
+Release: 8-dev.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -25,7 +25,6 @@ buttons
 # - multi-DND
 # - allow resizing of breadcrumbs (gtk.Grid) smaller than its current size
 # - escape with address bar focused does self.grab_focus()
-# - extra fields
 
 from pickle import dumps, loads
 from base64 import encodebytes, decodebytes
@@ -171,7 +170,7 @@ manager.set_headers_visible(True)
 manager.set_rubber_banding(False)
     (default: True)
 manager.set_tooltip_column(column)
-    (default: COL_NAME)
+    (default: not set)
 
 Note that column can be one of the COL_* attributes of this module, or for an
 extra column, fsmanage.COL_LAST + i + 1, where i is the column's index in the
@@ -206,7 +205,6 @@ extra_cols argument.
         self.set_search_column(COL_NAME)
         self.set_enable_tree_lines(True)
         self.set_rules_hint(True)
-        self.set_tooltip_column(COL_NAME)
         # drag and drop
         if not self.read_only:
             mod_mask = MOVE_BTN | COPY_BTN
@@ -301,9 +299,6 @@ extra_cols argument.
 
     def _show_menu (self, actions, menu_args):
         """Create a display a popup menu."""
-        # HACK: need to store the menu for some reason, else it doesn't show up
-        # - maybe GTK stores it in such a way that the garbage collector thinks
-        # it can get rid of it or something
         if not actions:
             return
         for i in (0, -1):
@@ -311,6 +306,9 @@ extra_cols argument.
                 actions.pop(i)
         if not actions:
             return
+        # HACK: need to store the menu for some reason, else it doesn't show up
+        # - maybe GTK stores it in such a way that the garbage collector thinks
+        # it can get rid of it or something
         menu = self._temp_menu = gtk.Menu()
         f = lambda widget, cb, *args: cb(*args)
         for x in actions:

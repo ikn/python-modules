@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 13.
+Release: 14-dev.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -10,6 +10,7 @@ included, you can find it here:
     CLASSES
 
 GCFS
+DiskError
 
     FUNCTIONS
 
@@ -37,7 +38,7 @@ PAUSED_WAIT = .1: in functions that take a progress function, if the action is
 # TODO:
 # - decompress function
 # - BNR support
-# - handle not being able to access self.fn
+# - don't load fst on startup: have .load_fst; replaces .update
 
 import os
 from os.path import getsize, exists, dirname, basename
@@ -447,11 +448,19 @@ To import a directory tree from the real filesystem, use the tree_from_dir
 function in this module and place the result in the tree attribute, or
 replace the whole tree if you want to import an entire GameCube filesystem.
 
+All methods that read from the disk image (apart from write) don't handle an
+IOError; you should handle this yourself.
+
     CONSTRUCTOR
 
-GCFS(fn)
+GCFS(fn, sanity = True)
 
 fn: file path to the image file.
+sanity: perform some sanity checks when loading the filesystem.  If any fail,
+        DiskError is raised.  This is to protect against crashes or hangs in
+        the case of invalid files.  Passing False is not recommended, but may
+        be necessary if there happens to be a valid disk that falls outside
+        these checks.
 
     METHODS
 
@@ -470,7 +479,7 @@ compress
 
     ATTRIBUTES
 
-fn: as given.
+fn, max_name_size: as given.
 fs_start: position in the image at which the filesystem starts.
 fst_size: image's filesystem table (includes string table) size in bytes.
 num_entries: number of entries in the filesystem.
@@ -505,34 +514,76 @@ tree: a dict representing the root directory.  Each directory is a dict whose
       one place in the tree.
 """
 
-    def __init__ (self, fn):
+    def __init__ (self, fn, sanity = True):
         self.fn = str(fn)
+        self.sanity = sanity
         # read data from the disk
         self.update()
 
     def _init (self):
         """Read and store data from the disk."""
+        sanity = self.sanity
         with open(self.fn, 'rb') as f:
+            if sanity:
+                # check DVD magic word
+                if read(f, 0x1c, 0x4, True) != 0xc2339f3d:
+                    raise DiskError(_('DVD magic word missing'))
+                end = f.seek(0, 2)
             self.fs_start = fs_start = read(f, 0x424, 0x4, True)
-            self.fst_size = read(f, 0x428, 0x4, True)
-            self.num_entries = read(f, self.fs_start + 0x8, 0x4, True)
-            self.str_start = str_start = self.fs_start + self.num_entries * 0xc
+            self.fst_size = fst_size = read(f, 0x428, 0x4, True)
+            fst_end = fs_start + fst_size
+            if sanity:
+                # check FST position and size
+                if fs_start < 0x2440: # this is where the Apploader starts
+                    raise DiskError(_('filesystem starts too early'))
+                elif fs_start > 0x4000000: # 64MiB
+                    raise DiskError(_('filesystem starts too late'))
+                if fst_size > 0x400000: # 4MiB
+                    raise DiskError(_('filesystem table too large'))
+                if fst_end > end:
+                    raise DiskError(_('filesystem ends too late'))
+            self.num_entries = n = read(f, fs_start + 0x8, 0x4, True)
+            if sanity:
+                if n == 0:
+                    raise DiskError(_('no root directory entry'))
+                if n > 10 ** 5:
+                    raise DiskError(_('too many files in the filesystem'))
+                if fst_size < n * 0xc:
+                    raise DiskError(_('filesystem table too small'))
+            self.str_start = str_start = fs_start + n * 0xc
+            # string table should start within FST
+            if sanity and self.str_start > fst_end:
+                raise DiskError(_('filesystem table ends too early'))
             # get file data
             self.entries = entries = []
-            for i in range(1, self.num_entries):
+            for i in range(1, n):
                 # get entry offset
                 entry_offset = fs_start + i * 0xc
                 # is_dir, str_offset, start, size
                 args = ((0x0, 0x1), (0x1, 0x3), (0x4, 0x4), (0x8, 0x4))
                 data = [read(f, entry_offset + offset, size, True)
                         for offset, size in args]
-                data[0] = bool(data[0])
+                data[0] = d = bool(data[0])
+                if sanity:
+                    # string table must be contained within FST
+                    if str_start + data[1] > fst_end:
+                        msg = _('found a file whose name starts too late')
+                        raise DiskError(msg)
+                    if d:
+                        if data[2] >= n:
+                            msg = _('found a directory with an invalid parent')
+                            raise DiskError(msg)
+                        if data[3] > n:
+                            msg = _('found an invalid directory entry')
+                            raise DiskError(msg)
+                    # don't limit file offset/size
                 entries.append(tuple(data))
             # get filenames
             self.names = names = []
             for entry in entries:
-                # only read 512 chars for safety
                 name = read(f, str_start + entry[1], 0x200, False, b'\0', 0x20)
+                if len(name) == 0x200: # 512B
+                    raise DiskError(_('too long a filename'))
                 names.append(_decode(name))
 
     def build_tree (self, store = True, start = 0, end = None):
@@ -650,7 +701,11 @@ size: the number of children in the tree or the total file size, or a dict of
             return size
 
     def update (self):
-        """Re-read data from the disk.  Discards all changes to the tree."""
+        """Re-read data from the disk.  Discards all changes to the tree.
+
+May raise DiskError (see constructor).
+
+"""
         self._init()
         # build tree
         self.tree = self.build_tree()
@@ -658,7 +713,8 @@ size: the number of children in the tree or the total file size, or a dict of
     def disk_changed (self, update = False):
         """Return whether changes have been made to the disk.
 
-This checks the filesystem table, but not the files themselves.
+This checks the filesystem table, but not the files themselves.  May raise
+DiskError (see constructor).
 
 """
         attrs = ('fs_start', 'fst_size', 'num_entries', 'str_start', 'entries',
@@ -1021,18 +1077,21 @@ be imported in the same call to this function.
                 except OSError:
                     pass
 
-        def cleanup ():
+        def cleanup (f = None):
             cleanup_tmp_dir()
             # return disk image to original size if expanded
             if truncated:
                 if f is None:
-                    with open(self.fn, 'r+b') as f:
-                        f.truncate(orig_disk_size)
+                    try:
+                        with open(self.fn, 'r+b') as f:
+                            f.truncate(orig_disk_size)
+                    except IOError:
+                        pass
                 else:
                     f.truncate(orig_disk_size)
 
         def error (msg, f = None, cls = IOError):
-            cleanup()
+            cleanup(f)
             # raise error
             e = cls(msg)
             e.handled = True
@@ -1042,30 +1101,37 @@ be imported in the same call to this function.
         if moving_files:
             orig_disk_size = getsize(self.fn)
             # copy files within disk image
-            with open(self.fn, 'r+b') as f:
-                # if we will be seeking beyond the image end, expand the file
-                end = f.seek(0, 2)
-                last_start = max(f[3] for f in moving_files)
-                if end < last_start:
-                    truncated = True
-                    f.truncate(last_start)
-                # copy
-                fn = self.fn
-                to_copy = []
-                to_copy_names = []
-                for old_i, i, old_start, start, size in moving_files:
-                    to_copy.append(((fn, f, old_start, size), (fn, f, start)))
-                    to_copy_names.append(names[i])
-                    # put in old_files
-                    old_files.append((start, i, old_i, size))
-                failed = copy(to_copy, progress, names, can_cancel = True)
-                if failed is True:
-                    # cancelled
-                    cleanup()
-                    return True
-                elif failed:
-                    msg = _('couldn\'t read from and write to the disk image')
-                    error(msg, f)
+            try:
+                with open(self.fn, 'r+b') as f:
+                    # if we will be seeking beyond the image end, expand it
+                    end = f.seek(0, 2)
+                    last_start = max(f[3] for f in moving_files)
+                    if end < last_start:
+                        truncated = True
+                        f.truncate(last_start)
+                    # copy
+                    fn = self.fn
+                    to_copy = []
+                    to_copy_names = []
+                    for old_i, i, old_start, start, size in moving_files:
+                        to_copy.append(((fn, f, old_start, size),
+                                        (fn, f, start)))
+                        to_copy_names.append(names[i])
+                        # put in old_files
+                        old_files.append((start, i, old_i, size))
+                    failed = copy(to_copy, progress, names, can_cancel = True)
+                    if failed is True:
+                        # cancelled
+                        cleanup(f)
+                        return True
+                    elif failed:
+                        msg = _('couldn\'t read from and write to the disk '
+                                'image')
+                        error(msg, f)
+            except IOError as e:
+                cleanup()
+                e.handled = True
+                raise
         # sort existing files by position
         old_files.sort()
         # get existing files overwritten by the filesystem/string tables and
@@ -1196,37 +1262,50 @@ be imported in the same call to this function.
             nf_clean.sort()
             nf_dirty.sort()
             # actually copy
-            with open(self.fn, 'r+b') as f:
-                # if we will be seeking beyond the image end, expand the file
-                end = f.seek(0, 2)
-                last_start = max(start for start, i in nf_clean + nf_dirty)
-                if end < last_start:
-                    f.truncate(last_start)
-                # split up the progress function
-                total = total_clean + total_dirty
-                p_clean = lambda d, t, n: progress(d, total, n)
-                p_dirty = lambda d, t, n: progress(d + total_clean, total, n)
-                # perform the copy
-                fn = self.fn
-                for clean in (True, False):
-                    to_copy = []
-                    to_copy_names = []
-                    for start, i in (nf_clean if clean else nf_dirty):
-                        is_dir, str_start, this_fn, size = entries[i]
-                        to_copy.append(((this_fn, None, 0, size),
-                                        (fn, f, start)))
-                        to_copy_names.append(names[i])
-                        entries[i] = (False, str_start, start, size)
-                    failed = copy(to_copy, p_clean if clean else p_dirty,
-                                  to_copy_names, can_cancel = clean)
-                    if failed is True:
-                        # cancelled
-                        cleanup()
-                        return True
-                    elif failed:
-                        msg = _('either couldn\'t read from \'{}\' or couldn\'t ' \
-                                'write to the disk image')
-                        error(msg.format(to_copy[failed[0]][0][0]), f)
+            clean = True
+            try:
+                with open(self.fn, 'r+b') as f:
+                    # if we will be seeking beyond the image end, expand it
+                    end = f.seek(0, 2)
+                    last_start = max(start for start, i in nf_clean + nf_dirty)
+                    if end < last_start:
+                        f.truncate(last_start)
+                    # split up the progress function
+                    total = total_clean + total_dirty
+                    p_clean = lambda d, t, n: progress(d, total, n)
+                    p_dirty = lambda d, t, n: progress(d + total_clean, total,
+                                                       n)
+                    # perform the copy
+                    fn = self.fn
+                    for clean in (True, False):
+                        to_copy = []
+                        to_copy_names = []
+                        for start, i in (nf_clean if clean else nf_dirty):
+                            is_dir, str_start, this_fn, size = entries[i]
+                            to_copy.append(((this_fn, None, 0, size),
+                                            (fn, f, start)))
+                            to_copy_names.append(names[i])
+                            entries[i] = (False, str_start, start, size)
+                        failed = copy(to_copy, p_clean if clean else p_dirty,
+                                      to_copy_names, can_cancel = clean)
+                        if failed is True:
+                            # cancelled
+                            cleanup(f)
+                            return True
+                        elif failed:
+                            msg = _('either couldn\'t read from \'{}\' or '
+                                    'couldn\'t write to the disk image')
+                            msg = msg.format(to_copy[failed[0]][0][0])
+                            if clean:
+                                error(msg, f)
+                            else:
+                                cleanup(f)
+                                raise IOError(msg)
+            except IOError as e:
+                cleanup()
+                if clean:
+                    e.handled = True
+                raise
 
         cleanup_tmp_dir()
         # get new fst_size, num_entries, str_start
@@ -1324,7 +1403,7 @@ See compress for more details.
         return changed
 
     def _slow_compress (self, tmp_dir, progress = None):
-        """Quick compress of the image.
+        """Slow compress of the image.
 
 _slow_compress(tmp_dir[, progress]) -> changed
 
@@ -1356,6 +1435,9 @@ filesystem string table and the file data, sometimes hundreds of MiB.  This
 will also remove free space between files that may have been opened up by
 deletions or other editing.
 
+This method calls the write method; see its documentation for information on
+exceptions.
+
 IMPORTANT: any changes that have been made to the tree are discarded before
 compressing.  Make sure you write everything you want to keep first.
 
@@ -1380,14 +1462,17 @@ will also remove free space between files that may have been opened up by
 deletions or other editing.
 
 A quick compress may not remove all free space, but does well enough.  It
-should also be faster and doesn't use any extra disk space (or memory, if you're
-thinking of a ramdisk).  Unless you're obsessive-compulsive, this should be
-good enough.
+should also be faster and doesn't use any extra disk space (or memory, if
+you're thinking of a ramdisk).  Unless you're obsessive-compulsive, this should
+be good enough.
 
 As implied above, a full compress may use some extra disk space.  While
 unlikely, this may be as much as the size of this disk image.  More
 importantly, if tmp_dir is not given, the directory used might be on a ramdisk,
 so we could end up running out of memory.  Be careful.
+
+This method calls the write method; see its documentation for information on
+exceptions.
 
 IMPORTANT: any changes that have been made to the tree are discarded before
 compressing.  Make sure you write everything you want to keep first.
@@ -1407,3 +1492,8 @@ compressing.  Make sure you write everything you want to keep first.
                 #rmtree(tmp_dir)
             #except OSError:
                 #pass
+
+
+class DiskError (EnvironmentError):
+    """Exception subclass raised for invalid disk images."""
+    pass
