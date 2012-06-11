@@ -39,6 +39,10 @@ PAUSED_WAIT = .1: in functions that take a progress function, if the action is
 # - decompress function
 # - BNR support
 # - don't load fst on startup: have .load_fst; replaces .update
+# BNR: http://hitmen.c02.at/files/yagcd/yagcd/chap14.html#sec14.1
+# RARC: http://hitmen.c02.at/files/yagcd/yagcd/chap15.html#sec15.3
+# Yaz0: http://hitmen.c02.at/files/yagcd/yagcd/chap16.html#sec16.2
+# BTI: http://www.amnoid.de/gc/bti.txt
 
 import os
 from os.path import getsize, exists, dirname, basename
@@ -415,8 +419,8 @@ matches: a list of (is_dir, parent_path, key) tuples for matching files and
     if current_dir is None:
         current_dir = []
         matches = []
-    elif not case_sensitive:
-        term = term.lower()
+        if not case_sensitive:
+            term = term.lower()
     for d_key, this_tree in tree.items():
         if d_key is None:
             # files
