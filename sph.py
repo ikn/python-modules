@@ -103,8 +103,8 @@ add(obj, *rects)
 
 obj: the object.
 *rects: the rectangle(s) describing the object's position; (x, y, w, h), where
-    x: x-coordinate of the left edge
-    y: x-coordinate of the top edge
+    x: x co-ordinate of the edge with the smallest x co-ordinate
+    y: y co-ordinate of the edge with the smallest y co-ordinate
     w: width
     h: height
 
@@ -202,7 +202,7 @@ None of the given objects are in the return list.
 Takes a list of objects and compiles a list of their boxes.  Then, we
 recursively look through the objects in those boxes and add any boxes they're
 in that aren't in our list yet, until we have every box connected to the given
-given objects.
+objects.
 
 The return value is a (boxes, objs) tuple, which are sets of all found boxes
 and all found objects respectively.

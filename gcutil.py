@@ -516,6 +516,7 @@ tree: a dict representing the root directory.  Each directory is a dict whose
 
       Note: bad things happen if you have an object (dict or list) in more than
       one place in the tree.
+
 """
 
     def __init__ (self, fn, sanity = True):
@@ -1277,8 +1278,10 @@ be imported in the same call to this function.
                     # split up the progress function
                     total = total_clean + total_dirty
                     p_clean = lambda d, t, n: progress(d, total, n)
-                    p_dirty = lambda d, t, n: progress(d + total_clean, total,
-                                                       n)
+                    def p_dirty (d, t, n):
+                        if d is not None:
+                            d += total_clean
+                        return progress(d, total, n)
                     # perform the copy
                     fn = self.fn
                     for clean in (True, False):

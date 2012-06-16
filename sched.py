@@ -144,7 +144,7 @@ run([frames][, seconds])
 Arguments are as required by Timer.run.
 
 """
-        self._timer.run(self._update)
+        self._timer.run(self._update, (), frames, seconds)
 
     def stop (self):
         """Stop the scheduler."""
