@@ -509,6 +509,13 @@ cascade: look in subcategories too.
 Wiki.edit(page, content[, summary], minor = False)
 
 """
+        #tree = self.get_tree('query', {'titles': '|'.join(names), 'prop': 'info', 'intoken': 'edit'})
+        #change = dict((page.attrib['to'], page.attrib['from']) for page in tree[0][0])
+        #for page in tree:
+        #    title = page.attrib['title']
+        #    title = change.get(title, title)
+        #    token = page.attrib['edittoken']
+
         print 'getting form parameters...'
         tree = self.fetch_tree(page, {'action': 'edit'})
         # content might be a function to perform on the source

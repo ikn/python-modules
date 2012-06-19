@@ -17,6 +17,10 @@ For managing GameCube filesystems.
 
     PYTHON 2
 
+    colhandler
+A simple, exact, 2D collision handler: rigid-body collisions of axis-aligned
+lines without rotation.
+
     cmdparse (depends on miscutil)
 A CLI command parser - stuff like 'program command [options] [arguments]'.
 Inspired by Mercurial, it accepts any unambiguous abbreviation of known
