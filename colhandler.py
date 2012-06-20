@@ -32,7 +32,6 @@ CollisionHandler
 """
 
 # TODO:
-# - collision groups
 # - moving diagonally into a corner goes through it
 # - handle inf/nan (from math import isinf, isnan)
 # - really long loops with e < 1 when a moving object is squashed between two others
@@ -58,7 +57,8 @@ lines: one or more axis-aligned solid lines, in the form
 
 obj: the object that uses this shape, or None.
 lines: contains lists of lines, one per direction, in the same form as given
-       without the direction element.  It is guaranteed that para0 <= para1.
+       without the direction element.  Don't alter this directly.  It is
+       guaranteed that para0 <= para1.
 
 It is guaranteed that any reference to a line will always be the current
 reference to that line.
@@ -273,7 +273,7 @@ class StaticObject (object):
 
     CONSTRUCTOR
 
-StaticObject(shape, elast = 0, frict = 0)
+StaticObject(shape, elast = 0, frict = 0, group = 1)
 
 shape: a Shape (subclass) instance.
 elast: the elasticity of collisions with this object.  When a collision occurs,
@@ -286,20 +286,25 @@ frict: the friction of collisions with this object.  The product of frictions
        of the colliding objects gives the maximum reduction in speed difference
        perpendicular to the collision direction.  Should be 0 (no effect) or
        above.
+layer: the object's collision layer(s).  This is an integer; objects o1 and o2
+       will only collide if o1.layer & o2.layer is not 0.  This means that an
+       object with a layer of 0 will collide with nothing, and an object with
+       a layer of -1 will collide with anything else.
 
     ATTRIBUTES
 
 shape: as given; if you change this, call the CollisionHandler's reinit method
        before the next update.
-elast, frict: as given; change directly as necessary.
+elast, frict, layer: as given; change directly as necessary.
 
 """
 
-    def __init__ (self, shape, elast = 0, frict = 0):
+    def __init__ (self, shape, elast = 0, frict = 0, layer = 1):
         shape.obj = self
         self.shape = shape
         self.elast = elast
         self.frict = frict
+        self.layer = layer
 
     def __str__ (self):
         return 'StaticObject{0}'.format((self.shape, self.elast))
@@ -312,12 +317,13 @@ class Object (StaticObject):
 
     CONSTRUCTOR
 
-Object(mass, shape, vel = [0, 0], elast = 0, frict = 0)
+Object(mass, shape, vel = [0, 0], ...)
 
 mass: the object's mass; used in determining the outcome of collisions.  This
       is a positive non-zero number, or None for infinite mass, which denotes a
       static object.
 vel: the object's (x, y) velocity.
+...: further arguments taken by StaticObject.
 
     ATTRIBUTES
 
@@ -325,10 +331,10 @@ mass, vel: as given; change these directly as necessary.
 
 """
 
-    def __init__ (self, mass, shape, vel = [0, 0], elast = 0, frict = 0):
+    def __init__ (self, mass, shape, vel = [0, 0], *args, **kw):
         self.mass = mass
         self.vel = vel
-        StaticObject.__init__(self, shape, elast, frict)
+        StaticObject.__init__(self, shape, *args, **kw)
 
     def __str__ (self):
         return 'Object{0}'.format((self.mass, self.shape, self.elast))
@@ -342,15 +348,9 @@ mass, vel: as given; change these directly as necessary.
 
 
 class CollisionHandler (object):
-    """Handle collisions for one moving rect ('player').
+    """Handle collisions for Object and StaticObject instances.
 
-To use this, don't change the position of the player directly, just the
-velocity, then call the move method with the velocity each frame to get the new
-position.
-
-Note on directions: where taken as an argument or used in a data structure, a
-direction is an integer from 0 to 3, which correspond to left to bottom,
-clockwise.
+Don't alter the properties of objects during callbacks.
 
     CONSTRUCTOR
 
@@ -397,20 +397,6 @@ update
 objs: as given; if you change this, call the reinit method before the next
       update.
 before_cb, after_cb, touching_cb, err: as given; change as necessary.
-
-"""
-    """
-
-sfcs: a {dirn: obj} dict of objects this object is currently 'against'. obj is
-      the other object, and dirn is the orientation of (the solid side of) the
-      surface of obj in contact.  If this object is against more than one
-      surface with the same orientation, it is not defined which one obj
-      corresponds to.
-
-      This is not fool-proof: for example, if this object is against a static
-      surface, slides off by moving parallel to it, then slides back on without
-      moving perpendicular to it at all, this object will not be reported as
-      being against the surface.
 
 """
 
@@ -598,6 +584,9 @@ Afterwards, velocities and positions of objects may have changed.
                         # don't check an object against itself
                         if o2 is o1:
                             continue
+                        # don't check if in different layers
+                        if not (o2.layer & o1.layer):
+                            continue
                         # get velocity of l2
                         v2 = [0, 0] if static else remaining_vel[o2.shape]
                         v2pr = dirn * v2[axis]
@@ -739,11 +728,12 @@ Afterwards, velocities and positions of objects may have changed.
                 # call after_cb
                 if after_cb:
                     I = 2 * (Ipr * Ipr + Ipl * Ipl) ** .5
-                    after_cb(o1, o2, i, i1, i2, )
+                    after_cb(o1, o2, i, i1, i2, I)
             else:
                 # done
                 break
         # update touching surfaces
+        touching_cb = self.touching_cb
         err = self.err
         rm = []
         for k, (l1, l2) in touching.iteritems():
