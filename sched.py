@@ -1,4 +1,4 @@
-"""Event scheduler.
+"""Event scheduler by Joseph Lansdowne.
 
 Uses Pygame's wait function if available, else the less accurate time.sleep.
 To use something else, do:
@@ -6,10 +6,11 @@ To use something else, do:
 import sched
 sched.wait = wait_function
 
-This function should take the number of milliseconds to wait for.
+This function should take the number of milliseconds to wait for.  This will
+always be an integer.
 
 Python version: 2.
-Release: 4.
+Release: 5.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -32,6 +33,7 @@ except ImportError:
     def wait (t):
         sleep(int(t * 1000))
 
+
 class Timer:
     """Simple timer.
 
@@ -40,7 +42,7 @@ what you need to.
 
     CONSTRUCTOR
 
-Timer(fps = 30)
+Timer(fps = 60)
 
 fps: frames per second to aim for.
 
@@ -49,16 +51,17 @@ fps: frames per second to aim for.
 run
 step
 stop
+get_fps
+set_fps
 
     ATTRIBUTES
 
-frame: the length of one frame in seconds.
 t: the time at the last step, if using individual steps.
 
 """
 
-    def __init__ (self, fps = 30):
-        self.frame = 1. / fps
+    def __init__ (self, fps = 60):
+        self.set_fps(fps)
         self.t = time()
 
     def run (self, cb, args = (), frames = None, seconds = None):
@@ -75,8 +78,7 @@ seconds: number of seconds to run for; this can be a float, and is not wrapped
 
 """
         self.stopped = False
-        frame = self.frame
-        t0 = time()
+        frame = self._frame
         if seconds is not None:
             frames = int(seconds / frame)
             # wait for remainder
@@ -85,6 +87,7 @@ seconds: number of seconds to run for; this can be a float, and is not wrapped
         if finite:
             frames = max(int(frames), 0)
         # main loop
+        t0 = time()
         while not finite or frames:
             cb(*args)
             if self.stopped:
@@ -98,13 +101,15 @@ seconds: number of seconds to run for; this can be a float, and is not wrapped
                 t0 = t
             if finite:
                 frames -= 1
+                if frames <= 0:
+                    break
 
     def step (self):
         """Step forwards one frame."""
         t = time()
-        dt = self.t + self.frame - t
+        dt = self.t + self._frame - t
         if dt > 0:
-            wait((1000 * dt))
+            wait(int(1000 * dt))
             self.t = t + dt
         else:
             self.t = t
@@ -113,26 +118,42 @@ seconds: number of seconds to run for; this can be a float, and is not wrapped
         """Stop any current call to Timer.run."""
         self.stopped = True
 
+    # the property builtin doesn't seem to be working for setters, which is a
+    # shame...
+
+    def get_fps (self):
+        """Get the current target FPS."""
+        return self._fps
+
+    def set_fps (self, fps):
+        """Set the target FPS."""
+        self._fps = int(round(fps))
+        self._frame = 1. / fps
+
+
 class Scheduler ():
     """Simple event scheduler.
 
     CONSTRUCTOR
 
-Scheduler(fps = 30)
+Scheduler(fps = 60)
 
 fps: frames per second to aim for.
 
     METHODS
 
 run
-stop
 add_timeout
 rm_timeout
 
+    ATTRIBUTES
+
+timer: Timer instance.  Use this to change the FPS or stop the scheduler.
+
 """
 
-    def __init__ (self, fps = 30):
-        self._timer = Timer(fps)
+    def __init__ (self, fps = 60):
+        self.timer = Timer(fps)
         self._cbs = {}
         self._max_id = 0
 
@@ -144,11 +165,7 @@ run([frames][, seconds])
 Arguments are as required by Timer.run.
 
 """
-        self._timer.run(self._update, (), frames, seconds)
-
-    def stop (self):
-        """Stop the scheduler."""
-        self._timer.stop()
+        self.timer.run(self._update, (), frames, seconds)
 
     def add_timeout (self, cb, args = (), frames = None, seconds = None,
                      repeat_frames = None, repeat_seconds = None):
@@ -176,11 +193,11 @@ otherwise it is removed.
 
 """
         if seconds is not None:
-            frames = int(seconds / self._timer.frame)
-        frames = max(int(frames), 0)
+            frames = seconds * self.time.fps
+        frames = max(int(frames), 1)
         if repeat_seconds is not None:
-            repeat_frames = int(repeat_seconds / self._timer.frame)
-        if repeat_frames is None:
+            repeat_frames = repeat_seconds * self.timer.fps
+        elif repeat_frames is None:
             repeat_frames = frames
         repeat_frames = max(int(repeat_frames), 0)
         self._cbs[self._max_id] = [frames, repeat_frames, cb, args]
@@ -201,14 +218,14 @@ otherwise it is removed.
         rm = []
         for i, (remain, total, cb, args) in self._cbs.iteritems():
             remain -= 1
-            if remain <= 0:
+            if remain == 0:
                 # call callback
-                again = cb(*args)
-                if again:
+                if cb(*args):
                     self._cbs[i][0] = total
                 else:
                     rm.append(i)
             else:
+                assert remain > 0
                 self._cbs[i][0] = remain
         for i in rm:
             del self._cbs[i]
