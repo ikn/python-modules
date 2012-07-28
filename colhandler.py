@@ -513,7 +513,7 @@ before_cb, after_cb, touching_cb, err: as given; change as necessary.
                         continue
                     # if touching,
                     l2pr, l2pl0, l2pl1 = l2
-                    if abs(l1pr - l2pr) <= err and l1pl0 < l2pl1 and \
+                    if l1pr == l2pr and l1pl0 < l2pl1 and \
                        l2pl1 > l1pl0:
                         # add to dict
                         touching[(i, o1, i1, o2, i2)] = (l1, l2)
@@ -638,6 +638,7 @@ Afterwards, velocities and positions of objects may have changed.
                             if not collisions:
                                 # no collisions left
                                 t = 1
+                                break
                         else:
                             # we have a collision to handle
                             e, f = data

@@ -39,6 +39,8 @@ PAUSED_WAIT = .1: in functions that take a progress function, if the action is
 # - decompress function
 # - BNR support
 # - don't load fst on startup: have .load_fst; replaces .update
+# - 'read' method that reads a file or part of it and returns the data
+# - have RARC/Yaz0/etc. classes that provide a similar interface to GCFS
 # BNR: http://hitmen.c02.at/files/yagcd/yagcd/chap14.html#sec14.1
 # RARC: http://hitmen.c02.at/files/yagcd/yagcd/chap15.html#sec15.3
 # Yaz0: http://hitmen.c02.at/files/yagcd/yagcd/chap16.html#sec16.2
