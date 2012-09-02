@@ -10,7 +10,7 @@ This function should take the number of milliseconds to wait for.  This will
 always be an integer.
 
 Python version: 2.
-Release: 5.
+Release: 6.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -51,11 +51,12 @@ fps: frames per second to aim for.
 run
 step
 stop
-get_fps
 set_fps
 
     ATTRIBUTES
 
+fps: the current target FPS.  Use the set_fps method to change it.
+frame: the current length of a frame in seconds.
 t: the time at the last step, if using individual steps.
 
 """
@@ -78,14 +79,14 @@ seconds: number of seconds to run for; this can be a float, and is not wrapped
 
 """
         self.stopped = False
-        frame = self._frame
+        frame = self.frame
         if seconds is not None:
             frames = int(seconds / frame)
             # wait for remainder
             wait(int(1000 * (frames * frame - seconds)))
         finite = frames is not None
         if finite:
-            frames = max(int(frames), 0)
+            frames = max(int(frames), 1)
         # main loop
         t0 = time()
         while not finite or frames:
@@ -101,13 +102,14 @@ seconds: number of seconds to run for; this can be a float, and is not wrapped
                 t0 = t
             if finite:
                 frames -= 1
-                if frames <= 0:
+                if frames == 0:
                     break
+                assert frames > 0
 
     def step (self):
         """Step forwards one frame."""
         t = time()
-        dt = self.t + self._frame - t
+        dt = self.t + self.frame - t
         if dt > 0:
             wait(int(1000 * dt))
             self.t = t + dt
@@ -118,17 +120,13 @@ seconds: number of seconds to run for; this can be a float, and is not wrapped
         """Stop any current call to Timer.run."""
         self.stopped = True
 
-    # the property builtin doesn't seem to be working for setters, which is a
-    # shame...
-
-    def get_fps (self):
-        """Get the current target FPS."""
-        return self._fps
+    # we don't use the property builtin so there's no getter, to reduce
+    # overhead there
 
     def set_fps (self, fps):
         """Set the target FPS."""
-        self._fps = int(round(fps))
-        self._frame = 1. / fps
+        self.fps = int(round(fps))
+        self.frame = 1. / fps
 
 
 class Scheduler ():
@@ -193,13 +191,13 @@ otherwise it is removed.
 
 """
         if seconds is not None:
-            frames = seconds * self.time.fps
+            frames = seconds * self.timer.fps
         frames = max(int(frames), 1)
         if repeat_seconds is not None:
             repeat_frames = repeat_seconds * self.timer.fps
         elif repeat_frames is None:
             repeat_frames = frames
-        repeat_frames = max(int(repeat_frames), 0)
+        repeat_frames = max(int(repeat_frames), 1)
         self._cbs[self._max_id] = [frames, repeat_frames, cb, args]
         self._max_id += 1
         # ID is key in self._cbs
@@ -216,7 +214,8 @@ otherwise it is removed.
     def _update (self):
         """Handle callbacks this frame."""
         rm = []
-        for i, (remain, total, cb, args) in self._cbs.iteritems():
+        # cbs might add/remove cbs, so use items instead of iteritems
+        for i, (remain, total, cb, args) in self._cbs.items():
             remain -= 1
             if remain == 0:
                 # call callback
