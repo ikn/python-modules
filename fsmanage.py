@@ -23,8 +23,13 @@ buttons
 
 # TODO:
 # - multi-DND
+#   - DragContext.set_icon_widget(widget, ox, oy)
+#       - requires Widget.get_has_window()
+#       - DragContext is passed to drag cbs (do in drag-begin)
+#       - should destroy widget in drag-data-end
 # - allow resizing of breadcrumbs (gtk.Grid) smaller than its current size
 # - escape with address bar focused does self.grab_focus()
+# - shortcuts like cut, copy, select all shouldn't work on address bar
 
 from pickle import dumps, loads
 from base64 import encodebytes, decodebytes

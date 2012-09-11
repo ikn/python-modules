@@ -1,7 +1,7 @@
 """GameCube file utilities.
 
 Python version: 3.
-Release: 15.
+Release: 16-dev.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -14,9 +14,11 @@ DiskError
 
     FUNCTIONS
 
+valid_name
 read
 write
 copy
+bnr_to_rgba32
 tree_from_dir
 search_tree
 
@@ -41,44 +43,8 @@ PAUSED_WAIT = .1: in functions that take a progress function, if the action is
 #   - if last file ends past end, do _quick_compress
 #   - if last file still ends past end, restore tree and throw error
 #   - else write then truncate to ISO size
-# - BNR support
-#   - have gcutil.bnr that takes the file data, and GCFS.game_info that calls it
-# - don't load fst on startup: have .load_fst; replaces .update
-# BNR: http://hitmen.c02.at/files/yagcd/yagcd/chap14.html#sec14.1
 # RARC: http://hitmen.c02.at/files/yagcd/yagcd/chap15.html#sec15.3
 # Yaz0: http://hitmen.c02.at/files/yagcd/yagcd/chap16.html#sec16.2
-# BTI: http://www.amnoid.de/gc/bti.txt
-
-
-# - try opening.bnr, followed by any .bnr in root dir
-# - check for magic word
-
-def _bnr_to_rgba32 (img_data):
-    # create destination array
-    target_bits = 8
-    w, h = 96, 32
-    dest = bytearray()
-    # split image data into 2-byte integers
-    src = array('H')
-    src.fromstring(img_data)
-    # iterate over pixbuf pixels
-    for rgba in src:
-        # unpack colours and place in pixel
-        # stored, bitwise, as R5G5B5A
-        pwr = 16
-        for n_bits in (5, 5, 5, 1):
-            pwr -= n_bits
-            mod = 2 ** pwr
-            # get this colour's value
-            v = (rgba // mod)
-            # scale to target bits
-            v *= (2 ** target_bits - 1) / (2 ** n_bits - 1)
-            # round and add
-            dest.append(int(round(v)))
-            # remove from pixel
-            rgba %= mod
-    return dest
-
 
 import os
 from os.path import getsize, exists, dirname, basename
@@ -252,6 +218,9 @@ progress: a function to periodically pass the current progress to.  It takes 3
           safely cancelled, some cleanup will be performed and the function
           will return True.  If the progress function is called again, you may
           assume that the copy cannot be cancelled.
+
+          You can force cancelling the copy by returning 3.  This can
+          potentially lead to a corrupted disk image.
 names: a list filenames corresponding to elements of the files list to pass to
        progress as the third argument, or 0 or 1 to use the names of the src or
        dest files respectively.
@@ -264,7 +233,7 @@ can_cancel: whether cancelling this copy operation (by returning 2 from the
 
 failed: a list of indices in the given files list for copies that failed.  Or,
         if this function is cancelled (see the progress and can_cancel
-        arguments), the return value is True.
+        arguments), the return value is the value used to cancel it (2 or 3).
 
 """
     string = (bytes, str)
@@ -354,6 +323,8 @@ failed: a list of indices in the given files list for copies that failed.  Or,
                         # paused
                         sleep(PAUSED_WAIT)
                         result = progress(None, None, None)
+                    if result == 3:
+                        return False
                     if result == 2 and can_cancel:
                         # cancel
                         return True
@@ -381,6 +352,43 @@ failed: a list of indices in the given files list for copies that failed.  Or,
     return failed
 
 
+def bnr_to_rgba32 (img_data):
+    """This function converts BNR image data to little-endian RGBA32.
+
+BNR files use little-endian RGB5A1 with pixels arranged in 4x4 blocks.  The
+argument is an iterable containing this data (probably as bytes), and the
+returned image is a bytearray.
+
+(RGB5A1 is 2B per pixel with bits RRRRRGGGGGBBBBBA, and RGBA32 is 4B per pixel
+with RRRRRRRRGGGGGGGGBBBBBBBBAAAAAAAA.)
+
+"""
+    # create destination array
+    target_bits = 8
+    w, h = 96, 32
+    dest = bytearray()
+    # split image data into 2-byte integers
+    src = array('H')
+    src.fromstring(img_data)
+    # iterate over pixbuf pixels
+    for rgba in src:
+        # unpack colours and place in pixel
+        # stored, bitwise, as R5G5B5A
+        pwr = 16
+        for n_bits in (5, 5, 5, 1):
+            pwr -= n_bits
+            mod = 2 ** pwr
+            # get this colour's value
+            v = (rgba // mod)
+            # scale to target bits
+            v *= (2 ** target_bits - 1) / (2 ** n_bits - 1)
+            # round and add
+            dest.append(int(round(v)))
+            # remove from pixel
+            rgba %= mod
+    return dest
+
+
 def tree_from_dir (root, walk_iter = None):
     """Build a tree from a directory on the real filesystem.
 
@@ -403,6 +411,11 @@ That is, you can place it directly in such a tree to import lots of files.
         for d in dirs:
             tree[(d, None)] = tree_from_dir(d, walk_iter)
     return tree
+
+
+def tree_names (tree):
+    """Get the top-level names in a tree (including files and directories)."""
+    return [x[0] for x in list(tree.keys()) + tree[None] if x is not None]
 
 
 def _match (term, name, case_sensitive, whole_name, regex):
@@ -526,6 +539,7 @@ extract_extra_files
 extract
 write
 compress
+decompress
 
     ATTRIBUTES
 
@@ -751,27 +765,34 @@ size: the number of children in the tree or the total file size, or a dict of
         else:
             return size
 
-    def flatten_tree (self, tree = None):
+    def flatten_tree (self, tree = None, files = True, dirs = True):
         """Get a list of files in the given tree with their parent trees.
 
-flatten_tree([tree]) -> files
+flatten_tree([tree], files = True, dirs = True) -> items
 
 tree: the tree to look in; defaults to this instance's tree attribute.
+files, dirs: whether to include files/directories.
 
-files: list of (file, tree, index) tuples, where tree[None][index] == file.
+items: list of (is_dir, item, parent, index) tuples, where, if is_dir,
+       parent[index] == item (and item is a tree), else
+       parent[None][index] == item.  If files or dirs is False, is_dir is
+       omitted.
 
 """
         if tree is None:
             tree = self.tree
-        files = []
+        items = []
         # files
-        for i, f in enumerate(tree[None]):
-            files.append((f, tree, i))
+        if files:
+            for i, f in enumerate(tree[None]):
+                items.append(((False,) if dirs else ()) + (f, tree, i))
         # dirs
         for k, t in tree.items():
             if k is not None:
-                files += self.flatten_tree(t)
-        return files
+                if dirs:
+                    items.append(((True,) if files else ()) + (t, tree, k))
+                items += self.flatten_tree(t, files, dirs)
+        return items
 
     def update (self):
         """Re-read data from the disk.  Discards all changes to the tree.
@@ -852,14 +873,6 @@ Returns a dict with 'img' (bytes), 'name', 'developer', 'full name',
 'full developer', 'description'.
 
 """
-        fields = (
-            ('img', 0x20, 0x1800),
-            ('name', 0x1820, 0x20, False, b'\0', 0x20),
-            ('developer', 0x1840, 0x20, False, b'\0', 0x20),
-            ('full name', 0x1860, 0x40, False, b'\0', 0x40),
-            ('full developer', 0x18a0, 0x40, False, b'\0', 0x40),
-            ('description', 0x18e0, 0x80, False, b'\0', 0x80),
-        )
         if index is None:
             # find file
             matches = [f for f in self.tree[None] if f[0] == 'opening.bnr']
@@ -875,8 +888,19 @@ Returns a dict with 'img' (bytes), 'name', 'developer', 'full name',
         if is_dir:
             raise ValueError('given file index corresponds to a directory')
         # read data
+        fields = (
+            ('img', 0x20, 0x1800),
+            ('name', 0x1820, 0x20, False, b'\0', 0x20),
+            ('developer', 0x1840, 0x20, False, b'\0', 0x20),
+            ('full name', 0x1860, 0x40, False, b'\0', 0x40),
+            ('full developer', 0x18a0, 0x40, False, b'\0', 0x40),
+            ('description', 0x18e0, 0x80, False, b'\0', 0x80),
+        )
         data = {}
         with open(self.fn, 'rb') as f:
+            # check for magic word
+            if read(f, offset, 0x4) not in (b'BNR1', b'BNR2'):
+                raise ValueError('invalid BNR file')
             for name, start, *args in fields:
                 this_data = read(f, offset + start, *args)
                 if name != 'img':
@@ -976,8 +1000,8 @@ failed: a list of files and directories that could not be created.  This is in
     - an imported file in a given tree is being extracted back out to itself
 
        Or, if this function is cancelled (through the progress function), the
-       return value is True; in this case, the destinations of files that have
-       already been extracted are not removed.
+       return value is the value used to cancel (2 or 3); in this case, the
+       destinations of files that have already been extracted are not removed.
 
 Like the entries attribute itself, this method does not take into account
 modifications made to the tree attribute that have not been written to the
@@ -1057,9 +1081,9 @@ Directories are extracted recursively.
                     failed_pool.append((orig_i, dest))
             # extract files
             failed = copy(to_copy, progress, to_copy_names, overwrite, True)
-            if failed is True:
+            if isinstance(failed, int):
                 # cancelled
-                return True
+                return failed
         return [failed_pool[i] for i in failed]
 
     def _align_4B (self, x):
@@ -1081,7 +1105,8 @@ progress: a function to call to indicate progress.  See the same argument to
           attribute) will be left unaltered (for all intents and purposes,
           anyway).
 
-cancelled: whether the write was cancelled (through the progress function).
+cancelled: whether the write was cancelled (through the progress function).  If
+           so, this is the value used to cancel it (2 or 3).
 
 This function looks at the current state of the tree and amends the filesystem
 in the GameCube image to be the same, copying files from the real filesystem as
@@ -1233,10 +1258,10 @@ be imported in the same call to this function.
                         # put in old_files
                         old_files.append((start, i, old_i, size))
                     failed = copy(to_copy, progress, names, can_cancel = True)
-                    if failed is True:
+                    if isinstance(failed, int):
                         # cancelled
                         cleanup(f)
-                        return True
+                        return failed
                     elif failed:
                         msg = _('couldn\'t read from and write to the disk '
                                 'image')
@@ -1403,10 +1428,10 @@ be imported in the same call to this function.
                             entries[i] = (False, str_start, start, size)
                         failed = copy(to_copy, p_clean if clean else p_dirty,
                                       to_copy_names, can_cancel = clean)
-                        if failed is True:
+                        if isinstance(failed, int):
                             # cancelled
                             cleanup(f)
-                            return True
+                            return failed
                         elif failed:
                             msg = _('either couldn\'t read from \'{}\' or '
                                     'couldn\'t write to the disk image')
@@ -1456,20 +1481,27 @@ be imported in the same call to this function.
     def _quick_compress (self):
         """Quick compress of the image.
 
-Returns whether any changes were made to the tree.
+Returns (changed, orig_size, new_size), where
+
+changed: whether any changes were made to the tree.
+orig_size, new_size: the size of the disk image file in bytes before and after
+                     compression; these are None if there are no files in the
+                     disk.
 
 See compress for more details.
 
 """
         # get files, sorted by reverse position
-        files = self.flatten_tree()
+        files = self.flatten_tree(dirs = False)
+        if not files:
+            return (False, None, None)
         entries = self.entries
-        files = [(entries[i][2], entries[i][3], i, name, tree[None], tree_i)
-                 for (name, i), tree, tree_i in files]
+        files = [[entries[i][2], entries[i][3], i, name, parent[None], tree_i]
+                 for (name, i), parent, tree_i in files]
         files.sort(reverse = True)
+        orig_size = sum(files[0][:2])
         # get start of file data
-        data_start, i = max((0, -1),
-                            *((e[1], i) for i, e in enumerate(entries)))
+        data_start, i = max((e[1], i) for i, e in enumerate(entries))
         if i != -1:
             data_start += len(_encode(self.names[i])) + 1
         data_start += self.str_start
@@ -1485,37 +1517,44 @@ See compress for more details.
             if gap > 0:
                 free.append((start, gap))
         free.sort()
-        # repeatedly put the last file in earliest possible gap
+        # repeatedly try to move every file earlier until none can
         changed = False
-        for file_i, (pos, size, i, name, d, d_i) in enumerate(files):
-            placed = False
-            for gap_i, (start, gap) in enumerate(free):
-                if gap >= size and start < pos:
-                    # mark file moved
-                    d[d_i] = (name, (i, start))
-                    # change gap entry
-                    end = start + gap
-                    start = align(start + size)
-                    gap = end - start
-                    if gap > 0:
-                        free[gap_i] = (start, gap)
-                        free.sort()
-                    else:
-                        free.pop(gap_i)
-                    placed = True
-                    changed = True
-                    break
-            if not placed:
-                # no gap: move to end of previous file if possible
-                if file_i != 0:
-                    start = files[file_i - 1][0] + files[file_i - 1][1]
-                    if pos - start > size:
-                        # got enough space to move without extracting anything
+        this_changed = True
+        while this_changed:
+            this_changed = False
+            # starting with the last file,
+            n = 0
+            for f_data in files:
+                pos, size, i, name, d, d_i = f_data
+                # put each file in the earliest possible gap
+                for gap_i, (start, gap) in enumerate(free):
+                    if gap >= size and start < pos:
+                        # mark file moved
                         d[d_i] = (name, (i, start))
+                        f_data[0] = start
+                        # change gap entry
+                        end = start + gap
+                        start = align(start + size)
+                        gap = end - start
+                        if gap > 0:
+                            free[gap_i] = (start, gap)
+                            free.sort()
+                        else:
+                            free.pop(gap_i)
+                        this_changed = True
                         changed = True
-                # finished - no point trying to move any other files earlier
-                break
-        return changed
+                        n += 1
+                        break
+            # resort files
+            files.sort(reverse = True)
+        # move last file to end of previous file if possible
+        start = align(sum(files[1][:2]) if len(files) > 1 else data_start)
+        pos, size, i, name, d, d_i = files[0]
+        if pos > start:
+            d[d_i] = (name, (i, start))
+            files[0][0] = pos
+            changed = True
+        return (changed, orig_size, sum(files[0][:2]))
 
     def _slow_compress (self, tmp_dir, progress = None):
         """Slow compress of the image.
@@ -1536,7 +1575,7 @@ See compress for more details.
         # - write()
         pass
 
-    def compress (self, progress = None):
+    def compress (self, progress = None, tree_ready = False):
         """Compress the image.
 
 compress([progress]) -> cancelled
@@ -1545,6 +1584,7 @@ progress: a function to call to indicate progress.  See the same argument to
           the write method for details.
 
 cancelled: whether the action was cancelled (through the progress function).
+           If so, this is the value used to cancel it (2 or 3).
 
 This function removes all free space in the image's filesystem to make it
 smaller.  GameCube images often have a load of free space between the
@@ -1595,8 +1635,9 @@ compressing.  Make sure you write everything you want to keep first.
 
 """
         # discard changes
-        self.build_tree()
-        if self._quick_compress():
+        if not tree_ready:
+            self.build_tree()
+        if tree_ready or self._quick_compress()[0]:
             try:
                 rtn = self.write(progress = progress)
             except Exception as e:
@@ -1618,6 +1659,50 @@ compressing.  Make sure you write everything you want to keep first.
                 #rmtree(tmp_dir)
             #except OSError:
                 #pass
+
+    def decompress (self, progress = None):
+        """Decompress the disk image to exactly 1459978240 bytes.
+
+decompress([progress]) -> cancelled
+
+progress: a function to call to indicate progress.  See the same argument to
+          the write method for details.
+
+cancelled: whether the action was cancelled (through the progress function).
+           If so, this is the value used to cancel it (2 or 3).
+
+If the disk is larger than the required size, compression is attempted first.
+If it can be compressed to become small enough, it is compressed and then
+decompressed; otherwise, ValueError is raised (and has a 'handled' attribute
+which is True).
+
+        """
+        target_size = 1459978240
+        size = max(0, *(
+            start + size for is_dir, str_start, start, size in self.entries
+        ))
+        if size > target_size:
+            # too large: try compressing
+            changed, orig_size, new_size = self._quick_compress()
+            if changed and new_size <= target_size:
+                # can get small enough by compressing
+                cancelled = self.compress(progress, True)
+                if cancelled:
+                    return cancelled
+            else:
+                # restore tree
+                self.build_tree()
+                msg = _('the disk is too large to fit in 1459978240 bytes')
+                e = ValueError(msg)
+                e.handled = True
+                raise e
+        elif size == target_size:
+            return False
+        # else small enough
+        # if we got here, we want to just truncate
+        with open(self.fn, 'r+b') as f:
+            f.truncate(target_size)
+        return False
 
 
 class DiskError (EnvironmentError):
