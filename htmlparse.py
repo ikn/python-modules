@@ -454,7 +454,7 @@ isn't defined.
         return self.attrs[attr.lower()].lower() == value.lower()
 
     def prev_sibling (self):
-        """Return the next sibling of this element.
+        """Return the previous sibling of this element.
 
 If this element has no parent or no preceding element in its parent, returns
 None.
