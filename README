@@ -17,9 +17,9 @@ For managing GameCube filesystems.
 
     PYTHON 2
 
-    colhandler
-A simple, exact, 2D collision handler: rigid-body collisions of axis-aligned
-lines without rotation.
+    sched
+A constant-framerate timer and event scheduler, calling functions after a
+delay.
 
     cmdparse (depends on miscutil)
 A CLI command parser - stuff like 'program command [options] [arguments]'.
@@ -46,10 +46,6 @@ A spatial hash implementation.
     gtkutil (depends on PyGTK <http://www.pygtk.org>)
 General PyGTK stuff.
 
-    sched
-A constant-framerate timer and event scheduler, calling functions after a
-delay.
-
     miscutil
 A few miscellaneous things.
 
@@ -66,15 +62,15 @@ A simple web page viewer; this module is not documented.
 
 These depend on Pygame <http://www.pygame.org>.
 
+    evthandler
+A simple callback-based event handler, with a particular focus on keyboard
+events and simulating key repeats.
+
     tiler
 Draw and manage a tiled grid.
 
     dispman
 Manage multiple displays on a single surface.
-
-    evthandler
-A simple callback-based event handler, with a particular focus on keyboard
-events and simulating key repeats.
 
     fonthandler
 Render multiline text with alignment and shadow and stuff.
