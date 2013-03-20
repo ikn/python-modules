@@ -72,5 +72,5 @@ Draw and manage a tiled grid.
     dispman
 Manage multiple displays on a single surface.
 
-    fonthandler
+    mltr
 Render multiline text with alignment and shadow and stuff.

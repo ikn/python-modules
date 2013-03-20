@@ -28,12 +28,13 @@ from cStringIO import StringIO
 import pycurl
 
 ff8 = 'Mozilla/5.0 (X11; Linux i686; rv:8.0.1) Gecko/20100101 Firefox/8.0.1'
+ff19 = 'Mozilla/5.0 (X11; Linux x86_64; rv:19.0) Gecko/20100101 Firefox/19.0'
 
 def get (url, post = None, use = None, save = None, throttle = None,
-         ua = ff8, store = None, httppost = False, info = False):
+         ua = ff19, store = None, httppost = False, info = False):
     """Fetch a single page using cURL.
 
-get(url[, post][, use][, save][, throttle], ua = fetch.ff8[, store],
+get(url[, post][, use][, save][, throttle], ua = fetch.ff19[, store],
     httppost = False, info = False) -> page
 
 post: already-urlencoded POST data.
