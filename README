@@ -17,10 +17,6 @@ For managing GameCube filesystems.
 
     PYTHON 2
 
-    sched
-A constant-framerate timer and event scheduler, calling functions after a
-delay.
-
     cmdparse (depends on miscutil)
 A CLI command parser - stuff like 'program command [options] [arguments]'.
 Inspired by Mercurial, it accepts any unambiguous abbreviation of known
@@ -33,6 +29,12 @@ characters will be).
 
     htmlparse (depends on miscutil)
 Parse (X)HTML (and apply CSS selections to the result).
+
+    dispman (depends on Pygame <http://www.pygame.org>)
+Manage multiple displays on a single surface.
+
+    tiler (depends on Pygame <http://www.pygame.org>)
+Draw and manage a tiled grid.
 
     fetch (depends on PycURL <http://pycurl.sourceforge.net>)
 Easy URL fetching with cookies and parallel transfers and stuff.
@@ -57,20 +59,3 @@ transformation and may not all work right at the moment.
     browser (depends on PyGTK <http://www.pygtk.org> PyWebKitGTK
              <https://code.google.com/p/pywebkitgtk>)
 A simple web page viewer; this module is not documented.
-
-    PYGAME
-
-These depend on Pygame <http://www.pygame.org>.
-
-    evthandler
-A simple callback-based event handler, with a particular focus on keyboard
-events and simulating key repeats.
-
-    tiler
-Draw and manage a tiled grid.
-
-    dispman
-Manage multiple displays on a single surface.
-
-    mltr
-Render multiline text with alignment and shadow and stuff.
