@@ -44,7 +44,8 @@ throttle: maximum download speed in Bps.
 ua: user-agent string.
 store: file to store data in.
 httppost: pass True to use PycURL HTTPPOST option; post is passed to this, so
-          don't urlencode it.
+          don't urlencode it.  See curl_formadd: dict values may be
+          (option, data).
 info: instead of just the data, return (data, response_code, effective_url),
       or just the latter two if saving to file.
 

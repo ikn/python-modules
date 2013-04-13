@@ -21,17 +21,18 @@ included, you can find it here:
 # delete cookies (current/all in this instance/all in folder)
 # if urlencode fails, use multipart, and also for too-long POST and files
 
-from fetch import get, fetch_pages
-from htmlparse import HTMLTree
-from urllib import urlencode
-from urllib2 import URLError
-from pycurl import FORM_FILE
-from xml.etree.ElementTree import XML
 from os import sep as path_sep, makedirs, remove
 from os.path import abspath, basename, expanduser, exists as path_exists
 from shutil import rmtree
 from time import strftime, gmtime
 from re import compile, sub
+from urllib import urlencode
+from urllib2 import URLError
+from xml.etree.ElementTree import XML
+
+from pycurl import FORM_FILE
+from fetch import get, fetch_pages
+from htmlparse import HTMLTree
 
 class Wiki (object):
     """Create a wiki instance.
@@ -77,7 +78,7 @@ edit [FIX]
 move
 move_cat [FIX]
 delete [FIX]
-upload [FIX]
+upload
 transfer_files
 
     ATTRIBUTES
@@ -171,14 +172,15 @@ See Wiki.fetch for details.
 """
         return HTMLTree(self.fetch(*args))
 
-    def api_get (self, action, args = {}, POST = False, user = None, format = 'xml'):
+    def api_get (self, action, args = {}, req = 'get', user = None,
+                 format = 'xml'):
         """Make API request.
 
-Wiki.api_get(action, args = {}, POST = False[, user], format = 'xml') -> page
+Wiki.api_get(action, args = {}, req = 'get'[, user], format = 'xml') -> page
 
 action: 'action' parameter.
 args: arguments to send to the API.
-POST: whether this needs to be a POST request.
+req: 'get', 'post' or 'httppost'.
 user: user to perform the request as (defaults to the active user); if there is
       no active user, no cookie is used (anonymous request).
 format: 'format' parameter.
@@ -188,20 +190,22 @@ format: 'format' parameter.
             c = self._cookie(user)
         except Exception:
             c = None
-        if POST:
-            GET = {}
-            POST = args
-        else:
+        if req == 'get':
             GET = args
             POST = {}
+        else: # req == *'post':
+            GET = {}
+            POST = args
         GET['action'] = action
         GET['format'] = format
         url = 'http://{0}?{1}'.format(self.api, urlencode(GET))
-        POST = urlencode(POST)
-        if c is None:
-            data = get(url, POST, info = True)
+        httppost = req == 'httppost'
+        if httppost:
+            POST = [(str(k), v if isinstance(v, (list, tuple)) else str(v))
+                    for k, v in POST.iteritems()]
         else:
-            data = get(url, POST, c, c, info = True)
+            POST = urlencode(POST)
+        data = get(url, POST, c, c, httppost = httppost, info = True)
         page, code, real_url = data
         if real_url != url:
             # got redirected: POST might not work properly, so fix self.url
@@ -233,7 +237,7 @@ Adds users successfully logged in to Wiki.logged_in and stores a cookie at
         args = {'lgname': user, 'lgpassword': pwd}
         if token is not None:
             args['lgtoken'] = token
-        page = self.get_tree('login', args, True, user)
+        page = self.get_tree('login', args, 'post', user)
         login = page[0]
         result = login.attrib['result']
         if result == 'NeedToken':
@@ -562,7 +566,7 @@ move_talk: also move talk page.
             args['movetalk'] = ''
         if not leave_redirect:
             args['noredirect'] = ''
-        tree = self.get_tree('move', args, True)
+        tree = self.get_tree('move', args, 'post')
         if not leave_redirect and 'redirectcreated' in tree.find('move').attrib:
             print 'redirect created: might need to delete'
         # TODO: check for errors <error code="..." info="...">
@@ -631,28 +635,30 @@ reason: a reason for the deletion.
         else:
             print 'success!'
 
-    def upload (self, fn, name = None, desc = ''):
+    def upload (self, fn, name = None, desc = '', destructive = True):
         """Upload a file.
 
 Wiki.upload(fn[, name], desc = '')
 
 fn: file path.
-name: name to save the file as at the wiki; defaults to the file's local name.
+name: name to save the file as at the wiki (without the 'File:'); defaults to
+      the file's local name.
 desc: description (full page content).
-
-Doesn't handle errors yet (TODO).
+destructive: ignore any warnings.
 
 """
         fn = expanduser(fn)
         if name is None:
             name = basename(fn)
-        POST = {
-            'wpDestFile': name,
-            'wpUploadDescription': desc,
-            'wpUpload': 'Upload file',
-            'wpUploadFile': (FORM_FILE, fn)
-        }
-        page = get(self.page('Special:Upload'), POST.items(), self._cookie(), httppost = True)
+        # get token
+        tree = self.get_tree('query', {'prop': 'info', 'intoken': 'edit', 'titles': 'File:' + name})
+        token = tree.find('query').find('pages').find('page').attrib['edittoken']
+        # perform upload
+        args = {'filename': name, 'file': (FORM_FILE, fn), 'text': desc, 'token': token}
+        if destructive:
+            args['ignorewarnings'] = 1
+        tree = self.api_get('upload', args, 'httppost')
+        # TODO: check for errors/warnings
 
     def transfer_files (self, target, *pages, **kwargs):
         """Move files and their descriptions from one wiki to another.
@@ -677,7 +683,7 @@ failed_pages: list of (page, error_msg) tuples.
         # add/replace namespaces
         pages_arg = '|'.join('Image:' + page[page.find(':') + 1:] for page in pages)
         print '\tgetting file details...'
-        tree = self.get_tree('query', {'prop': 'revisions|imageinfo', 'rvprop': 'content', 'iiprop': 'url', 'titles': pages_arg}, POST = True)
+        tree = self.get_tree('query', {'prop': 'revisions|imageinfo', 'rvprop': 'content', 'iiprop': 'url', 'titles': pages_arg}, 'post')
         pages = tree.find('query').find('pages')
         failed = []
         data = []
@@ -711,7 +717,7 @@ failed_pages: list of (page, error_msg) tuples.
                 except UnicodeEncodeError:
                     failed.append((name, 'filename contains a strange character'))
                     continue
-                tree = target.get_tree('upload', args, True)
+                tree = target.get_tree('upload', args, 'post')
                 # TODO: check for errors
                 if not destructive:
                     # TODO: check for warnings
