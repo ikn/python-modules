@@ -4,7 +4,7 @@ These are functions to fetch and process data from, and make changes to,
 MediaWiki installations.  Everything is done through the Wiki class.
 
 Python version: 2.
-Release 2.
+Release 3.
 
 Licensed under the GNU General Public License, version 3; if this was not
 included, you can find it here:
@@ -13,13 +13,9 @@ included, you can find it here:
 """
 
 # TODO:
-# METHODS:
 # uploader: original uploader of file
-# cats_on_page: categories a page is in ('#catlinks a'[1:])
-# do_multi (pass multiple actions of edit, move, delete, each as one arg with a list of separate *args, **kwargs, then use fetch_pages; also pass a function to act on pages if editing (string in, string out))
 # recent changes
 # delete cookies (current/all in this instance/all in folder)
-# if urlencode fails, use multipart, and also for too-long POST and files
 
 from os import sep as path_sep, makedirs, remove
 from os.path import abspath, basename, expanduser, exists as path_exists
@@ -28,11 +24,10 @@ from time import strftime, gmtime
 from re import compile, sub
 from urllib import urlencode
 from urllib2 import URLError
-from xml.etree.ElementTree import XML
+import json
 
 from pycurl import FORM_FILE
 from fetch import get, fetch_pages
-from htmlparse import HTMLTree
 
 class Wiki (object):
     """Create a wiki instance.
@@ -52,11 +47,8 @@ and can be set as the active user.
 
     UTILITIES
 
-page [DEL]
-fetch [DEL]
-fetch_tree [DEL]
-api_get [-> fetch]
-get_tree
+api_raw
+api
 login
 logout
 is_logged_in
@@ -67,33 +59,31 @@ set_active
 source
 exists
 list_pages
-links_to [FIX]
-file_url [FIX]
-save_files [FIX]
-pages_in_cat [FIX]
+file_url
+cats_on_page
 
     WRITE
 
-edit [FIX]
-move
+edit
+move [FIX]
 move_cat [FIX]
 delete [FIX]
-upload
-transfer_files
+upload [FIX]
+transfer_files [FIX]
 
     ATTRIBUTES
 
 logged_in: list of logged in users
 active: the active user, or None
 folder: the folder all cookies are stored in
-api: API URL
+api_url: API URL
 
 """
 
     def __init__ (self, url, user = None, pwd = None, trust_me = False):
         self.url = self._fix_url(url)
         # initialise some stuff
-        self.api = self.url + '/api.php'
+        self.api_url = self.url + '/api.php'
         self.logged_in = []
         self.active = None
         self.folder = expanduser('~') + path_sep + '.mwbot' + path_sep
@@ -101,8 +91,8 @@ api: API URL
             makedirs(self.folder)
         # check wiki exists if need to
         if not trust_me:
-            if not self.api_get('query').endswith('<api />'):
-                raise ValueError('can\'t access wiki API at \'{0}\''.format(self.api))
+            if self.api('query') != []:
+                raise ValueError('can\'t access wiki API at \'{0}\''.format(self.api_url))
         # log in if asked
         if user is not None:
             if self.login(user, pwd):
@@ -134,49 +124,11 @@ api: API URL
             raise Exception('no user specified and no active user exists')
         return '%scookie_%s_%s' % (self.folder, self.url.encode('hex'), user)
 
-    def page (self, page, GET = {}):
-        """Construct the full URL for a page.
-
-Wiki.page(page, GET = {}) -> full_url
-
-Uses Monobook.
-
-page: article name.
-GET: dict of HTTP_GET parameters.
-
-"""
-        return 'http://%s/index.php?useskin=monobook&redirect=no&title=%s&%s' % (self.url, page.replace(' ', '_').replace('&', '%26'), urlencode(GET))
-
-    def fetch (self, page, GET = {}, POST = None, store = None):
-        """Fetch a page as a logged in user.
-
-Wiki.fetch(page, GET = {}, POST[, store]) -> page_content
-
-page: article name.
-GET: dict of HTTP_GET parameters.
-POST: dict of HTTP_POST parameters.
-store: store the returned page in this file.
-
-"""
-        if POST is not None:
-            POST = urlencode(POST)
-        use = None if self.active is None else self._cookie()
-        return get(self.page(page, GET), POST, use, store = store)
-        # TODO: if not logged in on page: self.logged_in.pop(self.active); self.active = None; print 'Warning: the active user (\'%s\') is no longer logged in' % self.active; then try to log in, if success, redo, if fails, raise Exception
-
-    def fetch_tree (self, *args):
-        """Return the HTMLTree of a page as a logged in user.
-
-See Wiki.fetch for details.
-
-"""
-        return HTMLTree(self.fetch(*args))
-
-    def api_get (self, action, args = {}, req = 'get', user = None,
-                 format = 'xml'):
+    def api_raw (self, action, args = {}, req = 'post', user = None,
+                 format = 'json'):
         """Make API request.
 
-Wiki.api_get(action, args = {}, req = 'get'[, user], format = 'xml') -> page
+Wiki.api_raw(action, args = {}, req = 'get'[, user], format = 'json') -> page
 
 action: 'action' parameter.
 args: arguments to send to the API.
@@ -198,7 +150,7 @@ format: 'format' parameter.
             POST = args
         GET['action'] = action
         GET['format'] = format
-        url = 'http://{0}?{1}'.format(self.api, urlencode(GET))
+        url = 'http://{0}?{1}'.format(self.api_url, urlencode(GET))
         httppost = req == 'httppost'
         if httppost:
             POST = [(str(k), v if isinstance(v, (list, tuple)) else str(v))
@@ -212,16 +164,19 @@ format: 'format' parameter.
             base = 'http://' + self.url
             if real_url.endswith(url[len(base):]):
                 self.url = self._fix_url(real_url[:len(base) - len(url)])
-                self.api = self.url + '/api.php'
+                self.api_url = self.url + '/api.php'
         return page
 
-    def get_tree (self, *args, **kwargs):
-        """Return the ElementTree of an API query.
+    def api (self, *args, **kwargs):
+        """Return the parsed JSON of an API query.
 
-See Wiki.api_get for argument details.
+See Wiki.api_raw for argument details.
 
 """
-        return XML(self.api_get(*args, **kwargs))
+        args = args[:5]
+        if 'format' in kwargs:
+            del kwargs['format']
+        return json.loads(self.api_raw(*args, **kwargs))
 
     def login (self, user, pwd, token = None, api = False):
         """Log in.
@@ -237,16 +192,14 @@ Adds users successfully logged in to Wiki.logged_in and stores a cookie at
         args = {'lgname': user, 'lgpassword': pwd}
         if token is not None:
             args['lgtoken'] = token
-        page = self.get_tree('login', args, 'post', user)
-        login = page[0]
-        result = login.attrib['result']
-        if result == 'NeedToken':
+        page = self.api('login', args, 'post', user)['login']
+        if page['result'] == 'NeedToken':
             if token is None:
-                print 'got token: ' + login.attrib['token']
-                return self.login(user, pwd, login.attrib['token'])
+                print 'got token: ' + page['token']
+                return self.login(user, pwd, page['token'])
             else:
                 return False
-        elif result == 'Success':
+        elif page['result'] == 'Success':
             self.logged_in.append(user)
             if self.active is None:
                 self.active = user
@@ -306,243 +259,128 @@ Raises ValueError if the page doesn't exist.
 """
         if not page:
             raise ValueError('page name must not be zero-length')
-        tree = self.get_tree('query', {'prop': 'revisions', 'rvprop': 'content', 'titles': page})
-        tree_page = tree[0].find('pages')[0]
-        if 'missing' in tree_page.attrib:
-            raise ValueError('page \'{0}\' doesn\'t seem to exist'.format(page))
+        page = self.api(
+            'query', {'prop': 'revisions', 'rvprop': 'content', 'titles': page}
+        )['query']['pages'].values()[0]
+        if 'missing' in page:
+            raise ValueError(
+                'page \'{0}\' doesn\'t seem to exist'.format(page['title'])
+            )
+        elif 'invalid' in page:
+            raise ValueError(
+                'invalid page name: \'{0}\''.format(page['title'])
+            )
         else:
-            return tree_page[0][0].text
+            return page['revisions'][0]['*']
 
     def exists (self, page):
         """Check whether a page exists."""
         if not page:
             return False
-        tree = self.get_tree('query', {'prop': 'info', 'titles': page})
-        attrs = tree[0].find('pages')[0].attrib
-        return 'missing' not in attrs and 'invalid' not in attrs
+        page = self.api(
+            'query', {'prop': 'info', 'titles': page}
+        )['query']['pages'].values()[0]
+        return 'missing' not in page and 'invalid' not in page
 
-    def list_pages (self, ns = None, start = '', lim = None):
+    def list_pages (self, ns=None, start='', lim=None):
         """List pages given by Special:Allpages.
 
 Wiki.list_pages([ns]) -> page_list
 
-ns: namespace, either a number (faster) or string.  If not given, all
-    namespaces are checked.
+ns: namespace, either a number (faster) or string (TODO).  If not given, all
+    namespaces are checked (TODO).
 
 """
-        # TODO: ns = None gets all namespaces
-        # TODO: allow string ns (look up)
         pages = []
         while True:
-            got = len(pages)
             # get pages up to given limit or a bot maximum, if allowed
-            get = lim - got if lim is not None else 500
+            get = lim - len(pages) if lim is not None else 500
             if get == 0:
                 break
             args = {'list': 'allpages', 'apnamespace': ns, 'aplimit': get}
             if pages:
                 # already got some: continue from last
-                # strip ns first
-                page = pages[-1]
-                args['apfrom'] = page[page.find(':') + 1:]
+                args['apfrom'] = \
+                    res['query-continue']['allpages']['apcontinue']
             elif start:
                 # use given start if any
                 args['apfrom'] = start
-            tree = self.get_tree('query', args)
-            q = tree.find('query')
-            if q is None:
-                return []
-            new = [page.attrib['title'] for page in q.find('allpages')]
-            if pages:
-                # continued from last: ignore that one
-                pages += new[1:]
-            else:
-                pages += new
-            if tree.find('query-continue') is None:
+            res = self.api('query', args)
+            pages += [page['title'] for page in res['query']['allpages']]
+            if 'query-continue' not in res:
                 # no more to get
                 break
         return pages
 
-    def links_to (self, page, trans = True, links = True, redirs = True):
-        """Find what pages link to a page.
+    def file_url (self, page, width=-1):
+        """Get uploaded file URL.
 
-Wiki.links_to(page, trans = True, links = true, redir = True) -> page_list
+Wiki.file_url(page[, width])
 
-page: article name.
-trans: include transclusions.
-links: include links.
-redir: include redirects.
+width: width in pixels of the resulting image.
 
 """
-        if not page:
-            return []
-        GET = {'limit': '500'}
-        for x in ('trans', 'links', 'redirs'):
-            GET['hide%s' % x] = '0' if locals()[x] else '1'
-        print 'fetching Special:WhatLinksHere...'
-        tree = self.fetch_tree('Special:WhatLinksHere/%s' % page, GET)
-        links = tree.selection('#mw-whatlinkshere-list > li > a')
-        # check if there are more pages
-        n = 2
-        while True:
-            next = tree.selection('p + a')
-            if next:
-                do = False
-                if 'next' in next[0].source():
-                    do = 1
-                elif len(next) > 1:
-                    if 'next' in next[1].source():
-                        do = 2
-                if do:
-                    # more pages; follow link
-                    next = next[do - 1].attrs['href']
-                    next = next[next.find('&amp;from=') + 10:]
-                    if '&' in next:
-                        next = next[:next.find('&')]
-                    print 'page %s...' %n
-                    GET['from'] = next
-                    tree = self.fetch_tree('Special:WhatLinksHere/%s' % page, GET)
-                    links += tree.selection('#mw-whatlinkshere-list > li > a')
-                    n += 1
-                else:
-                    break
-            else:
-                break
-        return [link.source() for link in links]
-
-    def file_url (self, page):
-        """Get uploaded file URL."""
+        if any(page.lower().startswith(prefix)
+               for prefix in ('file:', 'image:')):
+            page = page[page.find(':') + 1:]
         # Image: for compatibility with older MW versions
-        tree = self.fetch_tree('Image:' + page)
-        try:
-            link = tree.selection('.filehistory .filehistory-selected a')[0]
-        except IndexError:
-            raise ValueError('File:\'%s\' doesn\'t seem to exist' % page)
-        else:
-            return link.attrs['href']
+        info = self.api(
+            'query',
+            {
+                'prop': 'imageinfo', 'iiprop': 'url', 'iiurlwidth': width,
+                'titles': 'Image:' + page
+            }
+        )['query']['pages'].values()[0]['imageinfo'][0]
+        return info['thumburl'] if 'thumburl' in info else info['url']
 
-    def save_files (self, *pages, **kwargs):
-        """Download files.
+    def cats_on_page (self, page):
+        """Get the categories that the given page is in.
 
-Wiki.save_files(*pages, dir = Wiki.folder)
-
-dir: the folder to store the files in.  This is a keyword-only argument.
-
-"""
-        d = kwargs.get('dir')
-        if d is None:
-            d = self.folder
-        else:
-            d = expanduser(d)
-        d = abspath(d)
-        if not path_exists(d):
-            makedirs(d)
-        # get URLs
-        urls = []
-        failed = []
-        good_pages = []
-        for page in pages:
-            try:
-                url = self.file_url(page)
-            except ValueError:
-                failed.append(page)
-            else:
-                good_pages.append(page)
-                urls.append(url)
-        more_failed = fetch_pages(urls, folder = d, files = good_pages, names = good_pages)[0]
-        # combine failed lists
-        failed += [good_pages[urls.index(url)] for url in more_failed]
-        return tuple(set(failed))
-
-    def _fix_cat (self, cat):
-        # remove prefix if exists and gives proper caps
-        if ':' in cat.lower():
-            cat = cat[cat.lower().find(':') + 1:]
-        return cat[0].upper() + cat[1:]
-
-    def pages_in_cat (self, cat, cascade = False):
-        """Return a list of the pages in the given category.
-
-Wiki.pages_in_cat(cat, cascade = False) -> page_list
-
-cat: the category to look in.
-cascade: look in subcategories too.
+Wiki.cats_in_page(page)
 
 """
-        cat = self._fix_cat(cat)
-        # get all category pages
-        print 'fetching Category:%s...' % cat
-        pages = [self.fetch_tree('Category:' + cat)]
-        page_links = pages[-1].selection('.pagingLinks')
-        if page_links:
-            from_page = page_links[0].spans[1]._a.attrs['href']
-            from_page = from_page[from_page.find('&amp;from=') + 10:]
-            n = 2
-            while True:
-                print '\tpage %s...' % n
-                pages.append(self.fetch_tree('Category:' + cat, {'from': from_page}))
-                page_links = pages[-1].selection('.pagingLinks')
-                a = page_links[0].selection('a')[0].source()
-                if 'next' in a:
-                    from_page = page_links[0].spans[1]._a.attrs['href']
-                    from_page = from_page[from_page.find('&amp;from=') + 10:]
-                else:
-                    break
-                n += 1
-        # compile subcategory/page lists
-        # subcategories
-        sub = [a.source() for a in pages[0].selection('#mw-subcategories a')]
-        result = set(('Category:' + cat for cat in sub))
-        # files in a gallery
-        media = (page.selection('#mw-category-media .gallerytext a') for page in pages)
-        for page in media:
-            result = result.union((a.attrs['title'] for a in page))
-        # normal pages
-        pages = (page.selection('#mw-pages a') for page in pages)
-        for page in pages:
-            result = result.union((a.source() for a in page))
-        if cascade:
-            # go through subcategories
-            for cat in sub:
-                result = result.union(self.pages_in_cat(cat, cascade))
-        return list(result)
+        cats = []
+        while True:
+            if get == 0:
+                break
+            args = {'prop': 'categories', 'titles': page, 'cllimit': 500}
+            if cats:
+                # already got some: continue from last
+                args['clcontinue'] = \
+                    res['query-continue']['categories']['clcontinue']
+            res = self.api('query', args)
+            print res
+            page_data = res['query']['pages'].values()[0]
+            if 'missing' in page_data or 'invalid' in page_data:
+                raise ValueError('no such page: \'{0}\''.format(page))
+            cats += [cat['title'] for cat in page_data['categories']]
+            if 'query-continue' not in res:
+                # no more to get
+                break
+        return cats
 
-    def edit (self, page, content, summary = '', minor = False):
+    def edit (self, page, content, summary='', minor=False):
         """Edit a page.
 
-Wiki.edit(page, content[, summary], minor = False)
+Wiki.edit(page, content[, summary], minor=False)
 
 """
-        #tree = self.get_tree('query', {'titles': '|'.join(names), 'prop': 'info', 'intoken': 'edit'})
-        #change = dict((page.attrib['to'], page.attrib['from']) for page in tree[0][0])
-        #for page in tree:
-        #    title = page.attrib['title']
-        #    title = change.get(title, title)
-        #    token = page.attrib['edittoken']
+        token = self.api(
+            'query', {'prop': 'info', 'intoken': 'edit', 'titles': page}
+        )['query']['pages'].values()[0]['edittoken']
+        if token == '+\\':
+            raise Exception('invalid token returned (missing permissions?)')
+        args = {
+            'title': page, 'text': content, 'token': token, 'summary': summary,
+            'bot': 'y'
+        }
+        if minor:
+            args['minor'] = 'y'
+        res = self.api('edit', args)
+        if res['edit']['result'] != 'Success':
+            raise Exception('edit failed')
 
-        print 'getting form parameters...'
-        tree = self.fetch_tree(page, {'action': 'edit'})
-        # content might be a function to perform on the source
-        try:
-            content = content(self.source(tree))
-        except TypeError:
-            pass
-        # construct POST
-        try:
-            token = tree.selection('#editform [name="wpEditToken"]')[0].attrs['value']
-        except IndexError:
-            raise Exception('insufficient permissions to edit page')
-        edittime = strftime('%Y%m%d%H%M%S', gmtime())
-        minor = ('0', '1')[minor]
-        # edit
-        print 'editing \'%s\'...' % page
-        tree = self.fetch_tree(page, {'action': 'submit'}, {'wpTextbox1': content, 'wpSummary': summary, 'wpSave': '1', 'wpSection': '', 'wpStarttime': edittime, 'wpEdittime': edittime, 'wpEditToken': token, 'wpMinorEdit': minor})
-        if tree.selection('#editform'):
-            raise Exception('something failed')
-        else:
-            print 'success!'
-
-    def move (self, page, to, reason = '', leave_redirect = True, move_talk = True):
+    def move (self, page, to, reason='', leave_redirect=True, move_talk=True):
         """Move a page.
 
 Wiki.move(page, to[, reason], leave_redirect = True, move_talk = True)
@@ -554,6 +392,7 @@ leave_redirect: leave behind a redirect.
 move_talk: also move talk page.
 
 """
+        return NotImplemented
         if page == to:
             print 'no change in name; page not moved'
             return
@@ -584,6 +423,7 @@ overwrite_if_exists: if the target category exists, whether to edit it with
                      category of the pages in cat is changed.
 
 """
+        return NotImplemented
         cat, to = self._fix_cat(cat), self._fix_cat(to)
 
         def callback (match):
@@ -618,6 +458,7 @@ page: the page to delete.
 reason: a reason for the deletion.
 
 """
+        return NotImplemented
         print 'getting form parameters...'
         tree = self.fetch_tree(page, {'action': 'delete'})
         if tree.selection('h1')[0].source() == 'Internal error':
@@ -647,6 +488,7 @@ desc: description (full page content).
 destructive: ignore any warnings.
 
 """
+        return NotImplemented
         fn = expanduser(fn)
         if name is None:
             name = basename(fn)
@@ -657,7 +499,7 @@ destructive: ignore any warnings.
         args = {'filename': name, 'file': (FORM_FILE, fn), 'text': desc, 'token': token}
         if destructive:
             args['ignorewarnings'] = 1
-        tree = self.api_get('upload', args, 'httppost')
+        tree = self.api('upload', args, 'httppost')
         # TODO: check for errors/warnings
 
     def transfer_files (self, target, *pages, **kwargs):
@@ -674,6 +516,7 @@ destructive: ignore any warnings (otherwise add that image to the failed list).
 failed_pages: list of (page, error_msg) tuples.
 
 """
+        return NotImplemented
         if not pages:
             return []
         destructive = kwargs.get('destructive', True)
