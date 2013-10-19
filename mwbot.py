@@ -16,6 +16,7 @@ included, you can find it here:
 # uploader: original uploader of file
 # recent changes
 # delete cookies (current/all in this instance/all in folder)
+# logout: actually call action=logout
 
 from os import sep as path_sep, makedirs, remove
 from os.path import abspath, basename, expanduser, exists as path_exists
@@ -97,8 +98,6 @@ api_url: API URL
         if user is not None:
             if self.login(user, pwd):
                 self.active = self.logged_in[0]
-            else:
-                print 'Warning: login details incorrect'
 
     def _fix_url (self, url):
         # remove protocol prefixes and trailing slash
@@ -189,23 +188,26 @@ Adds users successfully logged in to Wiki.logged_in and stores a cookie at
 """
         if user in self.logged_in:
             return True
-        args = {'lgname': user, 'lgpassword': pwd}
-        if token is not None:
-            args['lgtoken'] = token
-        page = self.api('login', args, 'post', user)['login']
-        if page['result'] == 'NeedToken':
-            if token is None:
-                print 'got token: ' + page['token']
-                return self.login(user, pwd, page['token'])
+
+        # check if already logged in through cookies
+        res = self.api('query', {'meta': 'userinfo'}, user=user)
+        if 'anon' not in res['query']['userinfo']:
+            success = True
+        else:
+            args = {'lgname': user, 'lgpassword': pwd}
+            if token is not None:
+                args['lgtoken'] = token
+            page = self.api('login', args, 'post', user)['login']
+            if page['result'] == 'NeedToken':
+                return token is None and self.login(user, pwd, page['token'])
             else:
-                return False
-        elif page['result'] == 'Success':
+                success = page['result'] == 'Success'
+
+        if success:
             self.logged_in.append(user)
             if self.active is None:
                 self.active = user
-            return True
-        else:
-            return False
+        return success
 
     def logout (self, user = None):
         """Log a user out.
@@ -312,7 +314,7 @@ ns: namespace, either a number (faster) or string (TODO).  If not given, all
                 break
         return pages
 
-    def file_url (self, page, width=-1):
+    def file_url (self, page, width=-1, height=-1):
         """Get uploaded file URL.
 
 Wiki.file_url(page[, width])
@@ -328,10 +330,16 @@ width: width in pixels of the resulting image.
             'query',
             {
                 'prop': 'imageinfo', 'iiprop': 'url', 'iiurlwidth': width,
-                'titles': 'Image:' + page
+                'iiurlheight': height, 'titles': 'Image:' + page
             }
         )['query']['pages'].values()[0]['imageinfo'][0]
-        return info['thumburl'] if 'thumburl' in info else info['url']
+        url = None
+        if 'thumburl' in info:
+            url = info['thumburl']
+        # thumburl can be an empty string
+        if not url:
+            url = info['url']
+        return url
 
     def cats_on_page (self, page):
         """Get the categories that the given page is in.
@@ -349,7 +357,6 @@ Wiki.cats_in_page(page)
                 args['clcontinue'] = \
                     res['query-continue']['categories']['clcontinue']
             res = self.api('query', args)
-            print res
             page_data = res['query']['pages'].values()[0]
             if 'missing' in page_data or 'invalid' in page_data:
                 raise ValueError('no such page: \'{0}\''.format(page))
@@ -359,23 +366,27 @@ Wiki.cats_in_page(page)
                 break
         return cats
 
-    def edit (self, page, content, summary='', minor=False):
+    def edit (self, page, content, summary='', minor=False, mode='replace'):
         """Edit a page.
 
-Wiki.edit(page, content[, summary], minor=False)
+Wiki.edit(page, content[, summary], minor=False, mode='replace')
+
+mode: 'replace', 'append' or 'prepend'
 
 """
-        token = self.api(
+        res = self.api(
             'query', {'prop': 'info', 'intoken': 'edit', 'titles': page}
-        )['query']['pages'].values()[0]['edittoken']
+        )
+        token = res['query']['pages'].values()[0]['edittoken']
         if token == '+\\':
             raise Exception('invalid token returned (missing permissions?)')
-        args = {
-            'title': page, 'text': content, 'token': token, 'summary': summary,
-            'bot': 'y'
-        }
+
+        args = {'title': page, 'token': token, 'summary': summary, 'bot': 'y'}
         if minor:
             args['minor'] = 'y'
+        args[{
+            'replace': 'text', 'append': 'appendtext', 'prepend': 'prependtext'
+        }[mode]] = content
         res = self.api('edit', args)
         if res['edit']['result'] != 'Success':
             raise Exception('edit failed')
