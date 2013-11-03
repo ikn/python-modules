@@ -302,13 +302,43 @@ ns: namespace, either a number (faster) or string (TODO).  If not given, all
             args = {'list': 'allpages', 'apnamespace': ns, 'aplimit': get}
             if pages:
                 # already got some: continue from last
-                args['apfrom'] = \
+                args['apcontinue'] = \
                     res['query-continue']['allpages']['apcontinue']
             elif start:
                 # use given start if any
                 args['apfrom'] = start
             res = self.api('query', args)
             pages += [page['title'] for page in res['query']['allpages']]
+            if 'query-continue' not in res:
+                # no more to get
+                break
+        return pages
+
+    def list_cat (self, cat, start='', lim=None):
+        """List pages in a category.
+
+Wiki.list_cat(cat) -> page_list
+
+"""
+        if not cat.lower().startswith('category:'):
+            cat = 'Category:' + cat
+        pages = []
+        while True:
+            # get pages up to given limit or a bot maximum, if allowed
+            get = lim - len(pages) if lim is not None else 500
+            if get == 0:
+                break
+            args = {'cmtitle': cat, 'list': 'categorymembers', 'cmlimit': get}
+            if pages:
+                # already got some: continue from last
+                args['cmcontinue'] = \
+                    res['query-continue']['categorymembers']['cmcontinue']
+            elif start:
+                # use given start if any
+                args['cmfrom'] = start
+            res = self.api('query', args)
+            pages += [page['title']
+                      for page in res['query']['categorymembers']]
             if 'query-continue' not in res:
                 # no more to get
                 break
