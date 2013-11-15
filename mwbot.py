@@ -66,9 +66,9 @@ cats_on_page
     WRITE
 
 edit
+delete
 move [FIX]
 move_cat [FIX]
-delete [FIX]
 upload [FIX]
 transfer_files [FIX]
 
@@ -401,7 +401,7 @@ Wiki.cats_in_page(page)
 
 Wiki.edit(page, content[, summary], minor=False, mode='replace')
 
-mode: 'replace', 'append' or 'prepend'
+mode: 'replace', 'append' or 'prepend'.
 
 """
         res = self.api(
@@ -490,32 +490,26 @@ overwrite_if_exists: if the target category exists, whether to edit it with
             # TODO: if fails, try to edit new cat with old cat's contents then delete old one
             self.move('Category:' + cat, 'Category:' + to, reason, False)
 
-    def delete (self, page, reason = ''):
+    def delete (self, page, reason=''):
         """Delete a page.
 
-Wiki.delete(page[, reason])
+Wiki.delete(page, reason='')
 
 page: the page to delete.
 reason: a reason for the deletion.
 
 """
-        return NotImplemented
-        print 'getting form parameters...'
-        tree = self.fetch_tree(page, {'action': 'delete'})
-        if tree.selection('h1')[0].source() == 'Internal error':
-            raise Exception('got Internal Error: the page may not exist')
-        try:
-            token = tree.selection('#deleteconfirm [name="wpEditToken"]')[0].attrs['value']
-        except IndexError:
-            raise Exception('insufficient permissions to delete page')
-        print 'deleting \'%s\'...' % page
-        tree = self.fetch_tree(page, {'action': 'delete', 'useskin': 'monobook'}, {'wpReason': reason, 'wpEditToken': token})
-        if tree.selection('.permissions-errors'):
-            raise Exception('insufficient permissions to delete page')
-        elif tree.selection('h1')[0].source() != 'Action complete':
-            raise Exception('something failed')
-        else:
-            print 'success!'
+        res = self.api(
+            'query', {'prop': 'info', 'intoken': 'delete', 'titles': page}
+        )
+        token = res['query']['pages'].values()[0]['deletetoken']
+        if token == '+\\':
+            raise Exception('invalid token returned (missing permissions?)')
+
+        res = self.api('delete',
+                       {'title': page, 'token': token, 'reason': reason})
+        if 'error' in res:
+            raise Exception('deletion failed', res)
 
     def upload (self, fn, name = None, desc = '', destructive = True):
         """Upload a file.
