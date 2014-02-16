@@ -1,10 +1,8 @@
 Some Python modules.
 
     LICENSE
-    
-Licensed under the GNU General Public License, version 3; if this was not
-included, you can find it here:
-    http://www.gnu.org/licenses/gpl-3.0.txt
+
+Modules define their own licenses.
 
     PYTHON 3
 
@@ -13,7 +11,10 @@ A GTK file manager for an arbitrary filesystem backend - the backend is just
 some object with methods like 'list_dir', 'copy' and 'delete'.
 
     gcutil
-For managing GameCube filesystems.
+Manage GameCube filesystems.
+
+    rss
+Create and maintain an RSS feed.
 
     PYTHON 2
 
