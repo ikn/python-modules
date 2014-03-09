@@ -40,9 +40,6 @@ Draw and manage a tiled grid.
     fetch (depends on PycURL <http://pycurl.sourceforge.net>)
 Easy URL fetching with cookies and parallel transfers and stuff.
 
-    parsedata
-Handle data files in a specific format.
-
     sph
 A spatial hash implementation.
 
@@ -56,7 +53,3 @@ A few miscellaneous things.
 Read from and write to MediaWiki installations: fetch and process data; perform
 edits, moves, deletions and the like.  This is^Wwas going through a bit of a
 transformation and may not all work right at the moment.
-
-    browser (depends on PyGTK <http://www.pygtk.org> PyWebKitGTK
-             <https://code.google.com/p/pywebkitgtk>)
-A simple web page viewer; this module is not documented.
