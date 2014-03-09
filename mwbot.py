@@ -6,9 +6,9 @@ MediaWiki installations.  Everything is done through the Wiki class.
 Python version: 2.
 Release 3.
 
-Licensed under the GNU General Public License, version 3; if this was not
-included, you can find it here:
-    http://www.gnu.org/licenses/gpl-3.0.txt
+Licensed under the GNU Lesser General Public License, version 3; if this was
+not included, you can find it here:
+    https://www.gnu.org/licenses/lgpl-3.0.txt
 
 """
 
