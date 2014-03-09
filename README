@@ -13,7 +13,7 @@ some object with methods like 'list_dir', 'copy' and 'delete'.
     gcutil
 Manage GameCube filesystems.
 
-    rss
+    srss
 Create and maintain an RSS feed.
 
     PYTHON 2
