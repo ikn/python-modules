@@ -4,7 +4,7 @@ These are functions to fetch and process data from, and make changes to,
 MediaWiki installations.  Everything is done through the Wiki class.
 
 Python version: 2.
-Release: 4.
+Release: 5.
 
 Licensed under the GNU Lesser General Public License, version 3; if this was
 not included, you can find it here:
@@ -294,24 +294,38 @@ ns: namespace, either a number (faster) or string (TODO).  If not given, all
 
 """
         pages = []
+        nxt = None
+
         while True:
             # get pages up to given limit or a bot maximum, if allowed
             get = lim - len(pages) if lim is not None else 500
             if get == 0:
                 break
             args = {'list': 'allpages', 'apnamespace': ns, 'aplimit': get}
-            if pages:
+
+            if pages and nxt is not None:
                 # already got some: continue from last
-                args['apcontinue'] = \
-                    res['query-continue']['allpages']['apcontinue']
+                args['apcontinue'] = nxt
             elif start:
                 # use given start if any
                 args['apfrom'] = start
+
             res = self.api('query', args)
-            pages += [page['title'] for page in res['query']['allpages']]
-            if 'query-continue' not in res:
-                # no more to get
+            try:
+                pages += [page['title'] for page in res['query']['allpages']]
+            except (TypeError, KeyError):
+                raise RuntimeError('unexpected response:', res)
+
+            try:
+                nxt = res['query-continue']['allpages']
+                nxt = nxt['apfrom'] or nxt['apcontinue']
+            except (TypeError, KeyError):
                 break
+            else:
+                if not nxt:
+                    # no more to get
+                    break
+
         return pages
 
     def list_cat (self, cat, start='', lim=None):
