@@ -4,7 +4,7 @@ These are functions to fetch and process data from, and make changes to,
 MediaWiki installations.  Everything is done through the Wiki class.
 
 Python version: 2.
-Release 3.
+Release: 4.
 
 Licensed under the GNU Lesser General Public License, version 3; if this was
 not included, you can find it here:
@@ -69,7 +69,7 @@ edit
 delete
 move [FIX]
 move_cat [FIX]
-upload [FIX]
+upload
 transfer_files [FIX]
 
     ATTRIBUTES
@@ -356,19 +356,21 @@ width: width in pixels of the resulting image.
                for prefix in ('file:', 'image:')):
             page = page[page.find(':') + 1:]
         # Image: for compatibility with older MW versions
-        info = self.api(
+        res = self.api(
             'query',
             {
                 'prop': 'imageinfo', 'iiprop': 'url', 'iiurlwidth': width,
                 'iiurlheight': height, 'titles': 'Image:' + page
             }
-        )['query']['pages'].values()[0]['imageinfo'][0]
-        url = None
-        if 'thumburl' in info:
-            url = info['thumburl']
+        )
+
+        try:
+            info = res['query']['pages'].values()[0]['imageinfo'][0]
+        except (TypeError, KeyError, IndexError):
+            raise RuntimeError('unexpected response:', res)
+
         # thumburl can be an empty string
-        if not url:
-            url = info['url']
+        url = info.get('thumburl') or info.get('url')
         return url
 
     def cats_on_page (self, page):
@@ -523,19 +525,29 @@ desc: description (full page content).
 destructive: ignore any warnings.
 
 """
-        return NotImplemented
-        fn = expanduser(fn)
         if name is None:
             name = basename(fn)
+        elif any(name.lower().startswith(prefix)
+                 for prefix in ('file:', 'image:')):
+            name = name[name.find(':') + 1:]
+
         # get token
-        tree = self.get_tree('query', {'prop': 'info', 'intoken': 'edit', 'titles': 'File:' + name})
-        token = tree.find('query').find('pages').find('page').attrib['edittoken']
+        res = self.api('query', {
+            'prop': 'info', 'intoken': 'edit', 'titles': 'File:' + name
+        })
+        try:
+            token = res['query']['pages'].values()[0]['edittoken']
+        except (TypeError, KeyError, IndexError):
+            raise RuntimeError('token request: unexpected response', res)
+
         # perform upload
-        args = {'filename': name, 'file': (FORM_FILE, fn), 'text': desc, 'token': token}
+        args = {'filename': name, 'file': (FORM_FILE, fn), 'text': desc,
+                'token': token}
         if destructive:
             args['ignorewarnings'] = 1
-        tree = self.api('upload', args, 'httppost')
-        # TODO: check for errors/warnings
+        res = self.api('upload', args, 'httppost')
+        if 'error' in res:
+            raise RuntimeError('upload failed', res['error'])
 
     def transfer_files (self, target, *pages, **kwargs):
         """Move files and their descriptions from one wiki to another.
