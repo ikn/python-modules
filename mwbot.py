@@ -4,7 +4,7 @@ These are functions to fetch and process data from, and make changes to,
 MediaWiki installations.  Everything is done through the Wiki class.
 
 Python version: 2.
-Release: 5.
+Release: 6.
 
 Licensed under the GNU Lesser General Public License, version 3; if this was
 not included, you can find it here:
@@ -577,7 +577,6 @@ destructive: ignore any warnings (otherwise add that image to the failed list).
 failed_pages: list of (page, error_msg) tuples.
 
 """
-        return NotImplemented
         if not pages:
             return []
         destructive = kwargs.get('destructive', True)
@@ -585,45 +584,71 @@ failed_pages: list of (page, error_msg) tuples.
             print '\tcreating Wiki instance...'
             target = Wiki(*target)
         # add/replace namespaces
-        pages_arg = '|'.join('Image:' + page[page.find(':') + 1:] for page in pages)
-        print '\tgetting file details...'
-        tree = self.get_tree('query', {'prop': 'revisions|imageinfo', 'rvprop': 'content', 'iiprop': 'url', 'titles': pages_arg}, 'post')
-        pages = tree.find('query').find('pages')
-        failed = []
-        data = []
-        print '\tgetting edit tokens...'
-        tree = target.get_tree('query', {'prop': 'info', 'intoken': 'edit', 'titles': pages_arg})
-        tokens = dict((page.attrib['title'], page.attrib['edittoken']) for page in tree[0].find('pages'))
-        print '\ttransferring files...'
-        for page in pages:
-            if 'missing' in page.attrib:
-                failed.append((page.attrib['title'], 'doesn\'t exist'))
+        pages_arg = '|'.join('Image:' + page[page.find(':') + 1:]
+                             for page in pages)
+
+        def all_failures (err):
+            return dict((name, err) for name in pages)
+
+        # get file details
+        res = self.api('query', {
+            'prop': 'revisions|imageinfo', 'rvprop': 'content',
+            'iiprop': 'url', 'titles': pages_arg
+        }, 'post')
+        try:
+            pages_info = res['query']['pages'].values()
+        except (TypeError, KeyError, AttributeError):
+            return all_failures(('page info: unexpected response', res))
+
+        for page in pages_info:
+            if not isinstance(page, dict) or 'title' not in page:
+                return all_failures(
+                    ('page info: unexpected page in response', page))
+
+        # get edit tokens
+        res = target.api('query', {
+            'prop': 'info', 'intoken': 'edit', 'titles': pages_arg
+        })
+        try:
+            tokens = dict((page['title'], page['edittoken'])
+                          for page in res['query']['pages'].values())
+        except (TypeError, KeyError, AttributeError):
+            return all_failures(('token request: unexpected response', res))
+
+        failed = {}
+        for page in pages_info:
+            name = page['title']
+            info = page.get('imageinfo')
+
+            if 'missing' in page or not info:
+                failed[name] = 'doesn\'t exist'
             else:
                 # upload
-                name = page.attrib['title']
                 token = tokens[name]
-                # get rid of namespace
-                name = name[name.find(':') + 1:]
-                url = page.find('imageinfo')
-                if url is None:
-                    failed.append((name, 'doesn\'t exist'))
+                try:
+                    url = info[0]['url']
+                except (TypeError, IndexError, KeyError):
+                    failed[name] = ('unexpected page info', info)
                     continue
-                else:
-                    url = url[0].attrib['url']
-                content = page.find('revisions')[0].text
-                if content is None:
+                try:
+                    content = page['revisions'][0].values()[0]
+                except (TypeError, KeyError, IndexError, AttributeError):
                     content = ''
-                args = {'filename': name, 'text': content.encode('utf-8'), 'url': url, 'token': token}
+
+                args = {
+                    # get rid of namespace
+                    'filename': name[name.find(':') + 1:],
+                    'text': content.encode('utf-8'),
+                    'url': url, 'token': token
+                }
                 if destructive:
                     args['ignorewarnings'] = 1
-                try:
-                    print name
-                except UnicodeEncodeError:
-                    failed.append((name, 'filename contains a strange character'))
-                    continue
-                tree = target.get_tree('upload', args, 'post')
-                # TODO: check for errors
+
+                res = target.api('upload', args, 'post')
+                if isinstance(res, dict) and 'error' in res:
+                    failed[name] = res['error']
                 if not destructive:
                     # TODO: check for warnings
                     pass
+
         return failed
