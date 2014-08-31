@@ -70,7 +70,7 @@ delete
 move [FIX]
 move_cat [FIX]
 upload
-transfer_files [FIX]
+transfer_files
 
     ATTRIBUTES
 
@@ -137,6 +137,10 @@ user: user to perform the request as (defaults to the active user); if there is
 format: 'format' parameter.
 
 """
+        enc = lambda s: s.encode('utf-8') if isinstance(s, unicode) else s
+        urlenc = lambda d: urlencode(dict((enc(k), enc(v))
+                                          for k, v in d.iteritems()))
+
         try:
             c = self._cookie(user)
         except Exception:
@@ -149,13 +153,13 @@ format: 'format' parameter.
             POST = args
         GET['action'] = action
         GET['format'] = format
-        url = 'http://{0}?{1}'.format(self.api_url, urlencode(GET))
+        url = 'http://{0}?{1}'.format(self.api_url, urlenc(GET))
         httppost = req == 'httppost'
         if httppost:
             POST = [(str(k), v if isinstance(v, (list, tuple)) else str(v))
                     for k, v in POST.iteritems()]
         else:
-            POST = urlencode(POST)
+            POST = urlenc(POST)
         data = get(url, POST, c, c, httppost = httppost, info = True)
         page, code, real_url = data
         if real_url != url:
@@ -305,10 +309,10 @@ ns: namespace, either a number (faster) or string (TODO).  If not given, all
 
             if pages and nxt is not None:
                 # already got some: continue from last
-                args['apcontinue'] = nxt
+                args.update(nxt)
             elif start:
                 # use given start if any
-                args['apfrom'] = start
+                args['apfrom'] = args['apcontinue'] = start
 
             res = self.api('query', args)
             try:
@@ -318,7 +322,6 @@ ns: namespace, either a number (faster) or string (TODO).  If not given, all
 
             try:
                 nxt = res['query-continue']['allpages']
-                nxt = nxt['apfrom'] or nxt['apcontinue']
             except (TypeError, KeyError):
                 break
             else:
@@ -574,7 +577,7 @@ pages: files' page names on this wiki (without namespace).
 destructive: ignore any warnings (otherwise add that image to the failed list).
              This is a keyword-only argument.
 
-failed_pages: list of (page, error_msg) tuples.
+failed_pages: dict from page to error message.
 
 """
         if not pages:
@@ -592,7 +595,7 @@ failed_pages: list of (page, error_msg) tuples.
 
         # get file details
         res = self.api('query', {
-            'prop': 'revisions|imageinfo', 'rvprop': 'content',
+            'prop': 'imageinfo', 'rvprop': 'content',
             'iiprop': 'url', 'titles': pages_arg
         }, 'post')
         try:
@@ -630,15 +633,10 @@ failed_pages: list of (page, error_msg) tuples.
                 except (TypeError, IndexError, KeyError):
                     failed[name] = ('unexpected page info', info)
                     continue
-                try:
-                    content = page['revisions'][0].values()[0]
-                except (TypeError, KeyError, IndexError, AttributeError):
-                    content = ''
 
                 args = {
                     # get rid of namespace
                     'filename': name[name.find(':') + 1:],
-                    'text': content.encode('utf-8'),
                     'url': url, 'token': token
                 }
                 if destructive:
