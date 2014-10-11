@@ -1,5 +1,7 @@
 Some Python modules.
 
+http://ikn.org.uk/Python_modules
+
     LICENSE
 
 Modules define their own licenses.
@@ -7,8 +9,8 @@ Modules define their own licenses.
     PYTHON 3
 
     fsmanage (depends on PyGObject 3 <https://live.gnome.org/PyGObject>)
-A GTK file manager for an arbitrary filesystem backend - the backend is just
-some object with methods like 'list_dir', 'copy' and 'delete'.
+A GTK file manager for an arbitrary filesystem backend.  This is deprecated in
+favour of a rewritten version: <http://ikn.org.uk/fsmanage>.
 
     gcutil
 Manage GameCube filesystems.
