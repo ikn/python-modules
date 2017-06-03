@@ -565,7 +565,6 @@ and the order of attributes.
             slash = ' /' if self.self_closing and xhtml else ''
             s = '<{0}{1}{2}>'.format(self.tag, attrs, slash)
         # child nodes
-        print self.nodes
         for node in self.nodes:
             if type(node) is HTMLTree:
                 s += node.out(comments, xhtml)
