@@ -1,6 +1,6 @@
 """Streaming RSS feed management.
 
-This is an early release, and is buggy, undocumented and lacking in features.
+This is an early release, and is lacking in features and probably buggy.
 
 Python version: 3.
 Release: 2.
@@ -14,15 +14,23 @@ included, you can find it here:
 """
 TODO:
     feed: support optional attrs; __*item__() with validation
+        FeedAttribute class with subclasses for each attr; knows how to:
+            generate output for FeedWriter
+            construct from etree
+            can stream into it
+                use Attribute as base for this and FeedItemAttribute, then this is useful for item content
     add items to a feed
+        have a FeedItem class to make one, and FeedItemAttribute
         set feed pubDate, lastBuildDate
         full attr support
             validate (error on unknown)
             source, enclosure, category aren't text
         expiry options: remove old items by age/cutoff date/number of items
             can return removed items/store in another file/file object
-    custom temp dir
-    support file obj instead of filename, somehow
+    streaming flexibility
+        custom input/output method (function to open a file object?)
+            default uses temp, otherwise doesn't
+                custom temp dir
 """
 
 import time
@@ -133,8 +141,8 @@ Feed.f.
 items: feed items, each a dict of feed item elements with string values;
        'title' and 'description' are required.  'pubDate' may be a
        time.struct_time, and the current local time is used if it is not
-       specified.  If 'guid' is not specified, and random UUID is used.
-       Elements requiring sub-elements are not supported.
+       specified.  If 'guid' is not specified, a random UUID is used.  Elements
+       requiring sub-elements are not supported.
 
 This method writes the new feed to a temporary file then replaces the original
 file with it.
